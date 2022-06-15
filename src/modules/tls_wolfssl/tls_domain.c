@@ -990,7 +990,7 @@ static int ksr_tls_fix_domain(tls_domain_t* d, tls_domain_t* def)
 
 		/* libssl >= 1.1.0 */
 		//d->ctx[i] = SSL_CTX_new(sr_tls_methods[d->method - 1].TLSMethod);
-		d->ctx[i] = wolfSSL_CTX_new(wolfSSLv23_server_method_ex(NULL));
+		d->ctx[i] = wolfSSL_CTX_new(wolfSSLv23_method());
 		if (d->ctx[i] == NULL) {
 			unsigned long e = 0;
 			e = ERR_peek_last_error();
