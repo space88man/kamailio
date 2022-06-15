@@ -28,8 +28,7 @@
 
 #include <poll.h>
 #include <wolfssl/options.h>
-#include <wolfssl/openssl/err.h>
-#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
 
 // WOLFFIX
 # define SSL_get_cipher_version(s)					\
@@ -287,7 +286,7 @@ static int tls_complete_init(struct tcp_connection* c)
 		goto error;
 	}
 	memset(data, '\0', sizeof(struct tls_extra_data));
-	data->ssl = SSL_new(dom->ctx[process_no]);
+	data->ssl = wolfSSL_new(dom->ctx[process_no]);
 	data->rwbio = tls_BIO_new_mbuf(0, 0);
 	data->cfg = cfg;
 	data->state = state;
@@ -295,7 +294,7 @@ static int tls_complete_init(struct tcp_connection* c)
 	if (unlikely(data->ssl == 0 || data->rwbio == 0)) {
 		TLS_ERR_SSL("Failed to create SSL or BIO structure:", data->ssl);
 		if (data->ssl)
-			SSL_free(data->ssl);
+			wolfSSL_free(data->ssl);
 		if (data->rwbio)
 			BIO_free(data->rwbio);
 		goto error;
@@ -303,9 +302,9 @@ static int tls_complete_init(struct tcp_connection* c)
 
 #ifndef OPENSSL_NO_TLSEXT
 	if (sname!=NULL) {
-		if(!SSL_set_tlsext_host_name(data->ssl, sname->s)) {
+		if(!wolfSSL_set_tlsext_host_name(data->ssl, sname->s)) {
 			if (data->ssl)
-				SSL_free(data->ssl);
+				wolfSSL_free(data->ssl);
 			if (data->rwbio)
 				BIO_free(data->rwbio);
 			goto error;
@@ -314,11 +313,11 @@ static int tls_complete_init(struct tcp_connection* c)
 	}
 #endif
 
-	SSL_set_bio(data->ssl, data->rwbio, data->rwbio);
+	wolfSSL_set_bio(data->ssl, data->rwbio, data->rwbio);
 	c->extra_data = data;
 
 	/* link the extra data struct inside ssl connection*/
-	SSL_set_app_data(data->ssl, data);
+	wolfSSL_set_app_data(data->ssl, data);
 	return 0;
 
 error:
@@ -415,18 +414,18 @@ static void tls_dump_cert_info(char* s, X509* cert)
 
 	if (subj){
 		LOG(cfg_get(tls, tls_cfg, log), "%s subject:%s\n", s ? s : "", subj);
-		OPENSSL_free(subj);
+		wolfSSL_OPENSSL_free(subj);
 	}
 	if (issuer){
 		LOG(cfg_get(tls, tls_cfg, log), "%s issuer:%s\n", s ? s : "", issuer);
-		OPENSSL_free(issuer);
+		wolfSSL_OPENSSL_free(issuer);
 	}
 }
 
 
 #ifndef OPENSSL_NO_ENGINE
 // lookup HSM keys in process-local memory
-EVP_PKEY * tls_lookup_private_key(SSL_CTX*);
+EVP_PKEY * tls_lookup_private_key(WOLFSSL_CTX*);
 #endif
 /** wrapper around SSL_accept, usin SSL return convention.
  * It will also log critical errors and certificate debugging info.
@@ -460,37 +459,37 @@ int tls_accept(struct tcp_connection *c, int* error)
 	}
 #ifndef OPENSSL_NO_ENGINE
 	/* check if we have a HSM key */
-	EVP_PKEY *pkey = tls_lookup_private_key(SSL_get_SSL_CTX(ssl));
+	EVP_PKEY *pkey = tls_lookup_private_key(wolfSSL_get_SSL_CTX(ssl));
 	if (pkey)
-		SSL_use_PrivateKey(ssl, pkey);
+		wolfSSL_use_PrivateKey(ssl, pkey);
 #endif
-	ret = SSL_accept(ssl);
+	ret = wolfSSL_accept(ssl);
 	if (unlikely(ret == 1)) {
 		DBG("TLS accept successful\n");
 		tls_c->state = S_TLS_ESTABLISHED;
 		tls_log = cfg_get(tls, tls_cfg, log);
 		LOG(tls_log, "tls_accept: new connection from %s:%d using %s %s %d\n",
 				ip_addr2a(&c->rcv.src_ip), c->rcv.src_port,
-				SSL_get_cipher_version(ssl), SSL_get_cipher_name(ssl),
+				SSL_get_cipher_version(ssl), wolfSSL_get_cipher_name(ssl),
 				SSL_get_cipher_bits(ssl, 0)
 			);
 		LOG(tls_log, "tls_accept: local socket: %s:%d\n",
 				ip_addr2a(&c->rcv.dst_ip), c->rcv.dst_port
 			);
-		cert = SSL_get_peer_certificate(ssl);
+		cert = wolfSSL_get_peer_certificate(ssl);
 		if (cert != 0) {
 			tls_dump_cert_info("tls_accept: client certificate", cert);
-			if (SSL_get_verify_result(ssl) != X509_V_OK) {
+			if (wolfSSL_get_verify_result(ssl) != X509_V_OK) {
 				LOG(tls_log, "WARNING: tls_accept: client certificate "
 						"verification failed!!!\n");
-				tls_dump_verification_failure(SSL_get_verify_result(ssl));
+				tls_dump_verification_failure(wolfSSL_get_verify_result(ssl));
 			}
 			X509_free(cert);
 		} else {
 			LOG(tls_log, "tls_accept: client did not present a certificate\n");
 		}
 	} else { /* ret == 0 or < 0 */
-		*error = SSL_get_error(ssl, ret);
+		*error = wolfSSL_get_error(ssl, ret);
 	}
 	return ret;
 err:
@@ -531,31 +530,31 @@ int tls_connect(struct tcp_connection *c, int* error)
 	}
 #ifndef OPENSSL_NO_ENGINE
 	// lookup HSM private key in process-local memory
-	EVP_PKEY *pkey = tls_lookup_private_key(SSL_get_SSL_CTX(ssl));
+	EVP_PKEY *pkey = tls_lookup_private_key(wolfSSL_get_SSL_CTX(ssl));
 	if (pkey) {
-		SSL_use_PrivateKey(ssl, pkey);
+		wolfSSL_use_PrivateKey(ssl, pkey);
 	}
 #endif
-	ret = SSL_connect(ssl);
+	ret = wolfSSL_connect(ssl);
 	if (unlikely(ret == 1)) {
 		DBG("TLS connect successful\n");
 		tls_c->state = S_TLS_ESTABLISHED;
 		tls_log = cfg_get(tls, tls_cfg, log);
 		LOG(tls_log, "tls_connect: new connection to %s:%d using %s %s %d\n",
 				ip_addr2a(&c->rcv.src_ip), c->rcv.src_port,
-				SSL_get_cipher_version(ssl), SSL_get_cipher_name(ssl),
+				SSL_get_cipher_version(ssl), wolfSSL_get_cipher_name(ssl),
 				SSL_get_cipher_bits(ssl, 0)
 			);
 		LOG(tls_log, "tls_connect: sending socket: %s:%d \n",
 				ip_addr2a(&c->rcv.dst_ip), c->rcv.dst_port
 			);
-		cert = SSL_get_peer_certificate(ssl);
+		cert = wolfSSL_get_peer_certificate(ssl);
 		if (cert != 0) {
 			tls_dump_cert_info("tls_connect: server certificate", cert);
-			if (SSL_get_verify_result(ssl) != X509_V_OK) {
+			if (wolfSSL_get_verify_result(ssl) != X509_V_OK) {
 				LOG(tls_log, "WARNING: tls_connect: server certificate "
 						"verification failed!!!\n");
-				tls_dump_verification_failure(SSL_get_verify_result(ssl));
+				tls_dump_verification_failure(wolfSSL_get_verify_result(ssl));
 			}
 			X509_free(cert);
 		} else {
@@ -565,7 +564,7 @@ int tls_connect(struct tcp_connection *c, int* error)
 		}
 		tls_run_event_routes(c);
 	} else { /* 0 or < 0 */
-		*error = SSL_get_error(ssl, ret);
+		*error = wolfSSL_get_error(ssl, ret);
 	}
 	return ret;
 err:
@@ -600,7 +599,7 @@ static int tls_shutdown(struct tcp_connection *c)
 		goto err;
 	}
 
-	ret = SSL_shutdown(ssl);
+	ret = wolfSSL_shutdown(ssl);
 	if (ret == 1) {
 		DBG("TLS shutdown successful\n");
 		return 0;
@@ -608,7 +607,7 @@ static int tls_shutdown(struct tcp_connection *c)
 		DBG("First phase of 2-way handshake completed succesfuly\n");
 		return 0;
 	} else {
-		err = SSL_get_error(ssl, ret);
+		err = wolfSSL_get_error(ssl, ret);
 		switch (err) {
 		case SSL_ERROR_ZERO_RETURN:
 			DBG("TLS shutdown failed cleanly\n");
@@ -696,7 +695,7 @@ void tls_h_tcpconn_clean_f(struct tcp_connection *c)
 	}
 	if (c->extra_data) {
 		extra = (struct tls_extra_data*)c->extra_data;
-		SSL_free(extra->ssl);
+		wolfSSL_free(extra->ssl);
 		atomic_dec(&extra->cfg->ref_count);
 		if (extra->ct_wq)
 			tls_ct_wq_free(&extra->ct_wq);
@@ -847,9 +846,9 @@ redo_wr:
 		n = tls_connect(c, &ssl_error);
 		TLS_WR_TRACE("(%p) tls_connect() => %d (err=%d)\n", c, n, ssl_error);
 		if (unlikely(n>=1)) {
-			n = SSL_write(ssl, buf + offs, len - offs);
+			n = wolfSSL_write(ssl, buf + offs, len - offs);
 			if (unlikely(n <= 0))
-				ssl_error = SSL_get_error(ssl, n);
+				ssl_error = wolfSSL_get_error(ssl, n);
 		} else {
 			/* tls_connect failed/needs more IO */
 			if (unlikely(n < 0 && ssl_error == SSL_ERROR_NONE))
@@ -860,9 +859,9 @@ redo_wr:
 		n = tls_accept(c, &ssl_error);
 		TLS_WR_TRACE("(%p) tls_accept() => %d (err=%d)\n", c, n, ssl_error);
 		if (unlikely(n>=1)) {
-			n = SSL_write(ssl, buf + offs, len - offs);
+			n = wolfSSL_write(ssl, buf + offs, len - offs);
 			if (unlikely(n <= 0))
-				ssl_error = SSL_get_error(ssl, n);
+				ssl_error = wolfSSL_get_error(ssl, n);
 		} else {
 			/* tls_accept failed/needs more IO */
 			if (unlikely(n < 0 && ssl_error == SSL_ERROR_NONE))
@@ -1157,7 +1156,7 @@ continue_ssl_read:
 				TLS_RD_TRACE("(%p, %p) tls_connect() => %d (err=%d)\n",
 								c, flags, n, ssl_error);
 				if (unlikely(n>=1)) {
-					n = SSL_read(ssl, r->pos, bytes_free);
+					n = wolfSSL_read(ssl, r->pos, bytes_free);
 				} else {
 					/* tls_connect failed/needs more IO */
 					if (unlikely(n < 0 && ssl_error == SSL_ERROR_NONE)) {
@@ -1172,7 +1171,7 @@ continue_ssl_read:
 				TLS_RD_TRACE("(%p, %p) tls_accept() => %d (err=%d)\n",
 								c, flags, n, ssl_error);
 				if (unlikely(n>=1)) {
-					n = SSL_read(ssl, r->pos, bytes_free);
+					n = wolfSSL_read(ssl, r->pos, bytes_free);
 				} else {
 					/* tls_accept failed/needs more IO */
 					if (unlikely(n < 0 && ssl_error == SSL_ERROR_NONE)) {
@@ -1185,7 +1184,7 @@ continue_ssl_read:
 			} else {
 				/* if bytes in then decrypt read buffer into tcpconn req.
 				 * buffer */
-				n = SSL_read(ssl, r->pos, bytes_free);
+				n = wolfSSL_read(ssl, r->pos, bytes_free);
 			}
 			/** handle SSL_read() return.
 			 *  There are 3 main cases, each with several sub-cases, depending
@@ -1241,12 +1240,12 @@ continue_ssl_read:
 				 * - simulate SSL EOF to force close connection*/
 				tls_dbg = cfg_get(tls, tls_cfg, debug);
 				LOG(tls_dbg, "Reading on a renegotiation of connection (n:%d) (%d)\n",
-						n, SSL_get_error(ssl, n));
+						n, wolfSSL_get_error(ssl, n));
 				err_src = "TLS R-N read:";
 				ssl_error = SSL_ERROR_ZERO_RETURN;
 			} else {
 				if (unlikely(n <= 0)) {
-					ssl_error = SSL_get_error(ssl, n);
+					ssl_error = wolfSSL_get_error(ssl, n);
 					err_src = "TLS read:";
 					/*  errors handled below, outside the lock */
 				} else {

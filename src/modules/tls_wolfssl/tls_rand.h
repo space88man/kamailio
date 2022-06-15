@@ -20,13 +20,11 @@
 #ifndef _TLS_RAND_H_
 #define _TLS_RAND_H_
 #include <wolfssl/options.h>
-#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
 
-#include <wolfssl/openssl/rand.h>
-
-const RAND_METHOD *RAND_ksr_krand_method(void);
-const RAND_METHOD *RAND_ksr_fastrand_method(void);
-const RAND_METHOD *RAND_ksr_cryptorand_method(void);
-// WOLFFIX const RAND_METHOD *RAND_ksr_kxlibssl_method(void);
+const WOLFSSL_RAND_METHOD *RAND_ksr_krand_method(void);
+const WOLFSSL_RAND_METHOD *RAND_ksr_fastrand_method(void);
+const WOLFSSL_RAND_METHOD *RAND_ksr_cryptorand_method(void);
+// WOLFFIX const WOLFSSL_RAND_METHOD *RAND_ksr_kxlibssl_method(void);
 
 #endif

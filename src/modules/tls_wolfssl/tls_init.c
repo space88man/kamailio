@@ -431,8 +431,8 @@ int tls_h_mod_pre_init_f(void)
 	LM_DBG("preparing tls env for modules initialization\n");
 
 	LM_DBG("preparing tls env for modules initialization (libssl >=1.1)\n");
-	OPENSSL_init_ssl(0, NULL);
-	SSL_load_error_strings();
+	wolfSSL_OPENSSL_init_ssl(0, NULL);
+	wolfSSL_load_error_strings();
 	tls_mod_preinitialized=1;
 	return 0;
 }
@@ -457,8 +457,8 @@ int tls_h_mod_init_f(void)
 	}
 	LM_DBG("initializing tls system\n");
 
-	ssl_version=OpenSSL_version_num();
-	ssl_version_txt=OpenSSL_version(OPENSSL_VERSION);
+	ssl_version=wolfSSL_OpenSSL_version_num();
+	ssl_version_txt=wolfSSL_OpenSSL_version(OPENSSL_VERSION);
 
 	/* check if version have the same major minor and fix level
 	 * (e.g. 0.9.8a & 0.9.8c are ok, but 0.9.8 and 0.9.9x are not)

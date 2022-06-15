@@ -25,13 +25,6 @@
  */
 
 #include <stdlib.h>
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-/**
- *#include <wolfssl/openssl/opensslv.h>
- *#include <wolfssl/openssl/bn.h>
- *#include <wolfssl/openssl/dh.h>
- */
 
 #ifndef OPENSSL_NO_ENGINE
 #include <openssl/engine.h>
@@ -109,7 +102,7 @@ static unsigned char dh3072_p[] = {
 static unsigned char dh3072_g[] = { 0x02 };
 #endif
 
-static void setup_dh(SSL_CTX *ctx)
+static void setup_dh(WOLFSSL_CTX *ctx)
 {
 /*
  * not needed for OpenSSL 1.1.0+ and LibreSSL
@@ -137,8 +130,8 @@ static void setup_dh(SSL_CTX *ctx)
 	dh->g = g;
 
 
-   SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
-   SSL_CTX_set_tmp_dh(ctx, dh);
+   wolfSSL_CTX_set_options(ctx, WOLFSSL_OP_SINGLE_DH_USE);
+   wolfSSL_CTX_set_tmp_dh(ctx, dh);
 
    DH_free(dh);
 #else
@@ -192,7 +185,7 @@ void tls_free_domain(tls_domain_t* d)
 	if (d->ctx) {
 		procs_no=get_max_procs();
 		for(i = 0; i < procs_no; i++) {
-			if (d->ctx[i]) SSL_CTX_free(d->ctx[i]);
+			if (d->ctx[i]) wolfSSL_CTX_free(d->ctx[i]);
 		}
 		shm_free(d->ctx);
 	}
@@ -376,7 +369,7 @@ static int ksr_tls_fill_missing(tls_domain_t* d, tls_domain_t* parent)
  * @param parg ?
  * @return return 0 on succes, <0 on critical error
  */
-typedef int (*per_ctx_cbk_f)(SSL_CTX* ctx, long larg, void* parg);
+typedef int (*per_ctx_cbk_f)(WOLFSSL_CTX* ctx, long larg, void* parg);
 
 
 /**
@@ -549,7 +542,7 @@ static int load_cert(tls_domain_t* d)
 		return -1;
 	procs_no=get_max_procs();
 	for(i = 0; i < procs_no; i++) {
-		if (!SSL_CTX_use_certificate_chain_file(d->ctx[i], d->cert_file.s)) {
+		if (!wolfSSL_CTX_use_certificate_chain_file(d->ctx[i], d->cert_file.s)) {
 			ERR("%s: Unable to load certificate file '%s'\n",
 			    tls_domain_str(d), d->cert_file.s);
 			TLS_ERR("load_cert:");
@@ -581,7 +574,7 @@ static int load_ca_list(tls_domain_t* d)
 		return -1;
 	procs_no=get_max_procs();
 	for(i = 0; i < procs_no; i++) {
-		if (SSL_CTX_load_verify_locations(d->ctx[i], d->ca_file.s,
+		if (wolfSSL_CTX_load_verify_locations(d->ctx[i], d->ca_file.s,
 					d->ca_path.s) != 1) {
 			ERR("%s: Unable to load CA list file '%s' dir '%s'\n",
 					tls_domain_str(d), (d->ca_file.s)?d->ca_file.s:"",
@@ -590,9 +583,9 @@ static int load_ca_list(tls_domain_t* d)
 			return -1;
 		}
 		if(d->ca_file.s && d->ca_file.len>0) {
-			SSL_CTX_set_client_CA_list(d->ctx[i],
-					SSL_load_client_CA_file(d->ca_file.s));
-			if (SSL_CTX_get_client_CA_list(d->ctx[i]) == 0) {
+			wolfSSL_CTX_set_client_CA_list(d->ctx[i],
+					wolfSSL_load_client_CA_file(d->ca_file.s));
+			if (wolfSSL_CTX_get_client_CA_list(d->ctx[i]) == 0) {
 				ERR("%s: Error while setting client CA list file [%.*s/%d]\n",
 						tls_domain_str(d), (d->ca_file.s)?d->ca_file.len:0,
 						(d->ca_file.s)?d->ca_file.s:"",
@@ -627,13 +620,13 @@ static int load_crl(tls_domain_t* d)
 				tls_domain_str(d), d->crl_file.len, d->crl_file.s);
 	procs_no=get_max_procs();
 	for(i = 0; i < procs_no; i++) {
-		if (SSL_CTX_load_verify_locations(d->ctx[i], d->crl_file.s, 0) != 1) {
+		if (wolfSSL_CTX_load_verify_locations(d->ctx[i], d->crl_file.s, 0) != 1) {
 			ERR("%s: Unable to load certificate revocation list '%s'\n",
 					tls_domain_str(d), d->crl_file.s);
 			TLS_ERR("load_crl:");
 			return -1;
 		}
-		store = SSL_CTX_get_cert_store(d->ctx[i]);
+		store = wolfSSL_CTX_get_cert_store(d->ctx[i]);
 		X509_STORE_set_flags(store,
 						X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
 	}
@@ -651,6 +644,7 @@ static int load_crl(tls_domain_t* d)
  * @param d domain
  * @return 0 on success, -1 on error
  */
+static int set_cipher_list(tls_domain_t*) __attribute__((unused));
 static int set_cipher_list(tls_domain_t* d)
 {
 	int i;
@@ -681,7 +675,7 @@ static int set_cipher_list(tls_domain_t* d)
 	if (!cipher_list) return 0;
 	procs_no=get_max_procs();
 	for(i = 0; i < procs_no; i++) {
-		if (SSL_CTX_set_cipher_list(d->ctx[i], cipher_list) == 0 ) {
+		if (wolfSSL_CTX_set_cipher_list(d->ctx[i], cipher_list) == 0 ) {
 			ERR("%s: Failure to set SSL context cipher list \"%s\"\n",
 					tls_domain_str(d), cipher_list);
 			return -1;
@@ -705,12 +699,12 @@ static int set_verification(tls_domain_t* d)
 	int procs_no;
 
 	if (d->require_cert || d->verify_client == TLS_VERIFY_CLIENT_ON) {
-		verify_mode = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+		verify_mode = WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT;
 		LOG(L_INFO, "%s: %s MUST present valid certificate\n", 
 			tls_domain_str(d), d->type & TLS_DOMAIN_SRV ? "Client" : "Server");
 	} else {
 		if (d->verify_cert || d->verify_client >= TLS_VERIFY_CLIENT_OPTIONAL) {
-			verify_mode = SSL_VERIFY_PEER;
+			verify_mode = WOLFSSL_VERIFY_PEER;
 			if (d->type & TLS_DOMAIN_SRV) {
 				LOG(L_INFO, "%s: IF client provides certificate then it"
 						" MUST be valid\n", tls_domain_str(d));
@@ -719,7 +713,7 @@ static int set_verification(tls_domain_t* d)
 				     tls_domain_str(d));
 			}
 		} else {
-			verify_mode = SSL_VERIFY_NONE;
+			verify_mode = WOLFSSL_VERIFY_NONE;
 			if (d->type & TLS_DOMAIN_SRV) {
 				LOG(L_INFO, "%s: No client certificate required and no checks"
 						" performed\n", tls_domain_str(d));
@@ -734,11 +728,11 @@ static int set_verification(tls_domain_t* d)
 	for(i = 0; i < procs_no; i++) {
 		if (d->verify_client >= TLS_VERIFY_CLIENT_OPTIONAL_NO_CA) {
 			/* Note that actual verification result is available in $tls_peer_verified */
-			SSL_CTX_set_verify(d->ctx[i], verify_mode, verify_callback_unconditional_success);
+			wolfSSL_CTX_set_verify(d->ctx[i], verify_mode, verify_callback_unconditional_success);
 		} else {
-			SSL_CTX_set_verify(d->ctx[i], verify_mode, 0);
+			wolfSSL_CTX_set_verify(d->ctx[i], verify_mode, 0);
 		}
-		SSL_CTX_set_verify_depth(d->ctx[i], d->verify_depth);
+		wolfSSL_CTX_set_verify_depth(d->ctx[i], d->verify_depth);
 
 	}
 	return 0;
@@ -759,7 +753,7 @@ static void sr_ssl_ctx_info_callback(const SSL *ssl, int event, int ret)
 		tls_dbg = cfg_get(tls, tls_cfg, debug);
 		LOG(tls_dbg, "SSL handshake started\n");
 		if(data==0)
-			data = (struct tls_extra_data*)SSL_get_app_data(ssl);
+			data = (struct tls_extra_data*)wolfSSL_get_app_data(ssl);
 		if(data->flags & F_TLS_CON_HANDSHAKED) {
 			LOG(tls_dbg, "SSL renegotiation initiated by client\n");
 			data->flags |= F_TLS_CON_RENEGOTIATION;
@@ -768,7 +762,7 @@ static void sr_ssl_ctx_info_callback(const SSL *ssl, int event, int ret)
 	if (event & SSL_CB_HANDSHAKE_DONE) {
 		tls_dbg = cfg_get(tls, tls_cfg, debug);
 		if(data==0)
-			data = (struct tls_extra_data*)SSL_get_app_data(ssl);
+			data = (struct tls_extra_data*)wolfSSL_get_app_data(ssl);
 		LOG(tls_dbg, "SSL handshake done\n");
 		data->flags |= F_TLS_CON_HANDSHAKED;
 	}
@@ -792,9 +786,9 @@ static int set_ssl_options(tls_domain_t* d)
 				SSL_OP_CIPHER_SERVER_PREFERENCE;
 
 	for(i = 0; i < procs_no; i++) {
-		SSL_CTX_set_options(d->ctx[i], options);
+		wolfSSL_CTX_set_options(d->ctx[i], options);
 		if(sr_tls_renegotiation==0)
-			SSL_CTX_set_info_callback(d->ctx[i], sr_ssl_ctx_info_callback);
+			wolfSSL_CTX_set_info_callback(d->ctx[i], sr_ssl_ctx_info_callback);
 	}
 	return 0;
 }
@@ -818,11 +812,11 @@ static int set_session_cache(tls_domain_t* d)
 		 * cache is stored in SSL_CTX and we have one SSL_CTX per process,
 		 * thus sessions among processes will not be reused
 		 */
-		SSL_CTX_set_session_cache_mode(d->ctx[i],
+		wolfSSL_CTX_set_session_cache_mode(d->ctx[i],
 				cfg_get(tls, tls_cfg, session_cache) ? SSL_SESS_CACHE_SERVER :
 				SSL_SESS_CACHE_OFF);
 		/* not really needed is SSL_SESS_CACHE_OFF */
-		SSL_CTX_set_session_id_context(d->ctx[i],
+		wolfSSL_CTX_set_session_id_context(d->ctx[i],
 					(unsigned char*)tls_session_id.s, tls_session_id.len);
 	}
 	return 0;
@@ -833,17 +827,17 @@ static int set_session_cache(tls_domain_t* d)
 /**
  * @brief TLS SSL_CTX_set_mode and SSL_CTX_clear_mode wrapper
  * @param ctx SSL context
- * @param mode SSL_MODE_*
+ * @param mode WOLFSSL_MODE_*
  * @param clear if set to !=0 will do a clear, else (==0) a set
  * @return 0 (always succeeds)
  */
-static int tls_ssl_ctx_mode(SSL_CTX* ctx, long mode, void* clear)
+static int tls_ssl_ctx_mode(WOLFSSL_CTX* ctx, long mode, void* clear)
 {
 	if (clear)
-		SSL_CTX_clear_mode(ctx, mode);
+		wolfSSL_CTX_clear_mode(ctx, mode);
 
 	else
-		SSL_CTX_set_mode(ctx, mode);
+		wolfSSL_CTX_set_mode(ctx, mode);
 	return 0;
 }
 
@@ -856,7 +850,7 @@ static int tls_ssl_ctx_mode(SSL_CTX* ctx, long mode, void* clear)
  * @param unused unused
  * @return 0 (always succeeds)
  */
-static int tls_ssl_ctx_set_freelist(SSL_CTX* ctx, long val, void* unused)
+static int tls_ssl_ctx_set_freelist(WOLFSSL_CTX* ctx, long val, void* unused)
 {
 	return 0;
 }
@@ -868,7 +862,7 @@ static int tls_ssl_ctx_set_freelist(SSL_CTX* ctx, long val, void* unused)
  * @param unused unused
  * @return 0 on success, < 0 on failure (invalid value)
  */
-static int tls_ssl_ctx_set_max_send_fragment(SSL_CTX* ctx, long val, void* unused)
+static int tls_ssl_ctx_set_max_send_fragment(WOLFSSL_CTX* ctx, long val, void* unused)
 {
 	/* WOLFFIX if (val >= 0)
 		return SSL_CTX_set_max_send_fragment(ctx, val) -1;
@@ -886,10 +880,10 @@ static int tls_ssl_ctx_set_max_send_fragment(SSL_CTX* ctx, long val, void* unuse
  * @param unused unused
  * @return 0 (always success).
  */
-static int tls_ssl_ctx_set_read_ahead(SSL_CTX* ctx, long val, void* unused)
+static int tls_ssl_ctx_set_read_ahead(WOLFSSL_CTX* ctx, long val, void* unused)
 {
 	if (val >= 0)
-		SSL_CTX_set_read_ahead(ctx, val);
+		wolfSSL_CTX_set_read_ahead(ctx, val);
 	return 0;
 }
 
@@ -907,7 +901,7 @@ static int tls_server_name_cb(SSL *ssl, int *ad, void *private)
 	str server_name;
 
 	orig_domain = (tls_domain_t*)private;
-	server_name.s = (char*)SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+	server_name.s = (char*)wolfSSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 	if (server_name.s)  {
 		LM_DBG("received server_name (TLS extension): '%s'\n", server_name.s);
 	} else {
@@ -935,13 +929,13 @@ static int tls_server_name_cb(SSL *ssl, int *ad, void *private)
 		new_domain->port, ZSW(new_domain->server_name.s),
 		new_domain->ctx[process_no], new_domain,
 		(new_domain->type & TLS_DOMAIN_DEF)?" (default)":"");
-	SSL_set_SSL_CTX(ssl, new_domain->ctx[process_no]);
+	wolfSSL_set_SSL_CTX(ssl, new_domain->ctx[process_no]);
 	/* SSL_set_SSL_CTX only sets the correct certificate parameters, but does
 	   set the proper verify options. Thus this will be done manually! */
 
-	SSL_set_options(ssl, SSL_CTX_get_options(SSL_get_SSL_CTX(ssl)));
-	if ((SSL_get_verify_mode(ssl) == SSL_VERIFY_NONE) ||
-				(SSL_num_renegotiations(ssl) == 0)) {
+	wolfSSL_set_options(ssl, wolfSSL_CTX_get_options(wolfSSL_get_SSL_CTX(ssl)));
+	if ((wolfSSL_get_verify_mode(ssl) == WOLFSSL_VERIFY_NONE) ||
+				(wolfSSL_num_renegotiations(ssl) == 0)) {
 		/*
 		 * Only initialize the verification settings from the ctx
 		 * if they are not yet set, or if we're called when a new
@@ -949,8 +943,9 @@ static int tls_server_name_cb(SSL *ssl, int *ad, void *private)
 		 * Otherwise, we would possibly reset a per-directory
 		 * configuration which was put into effect by ssl_hook_access.
 		 */
-		SSL_set_verify(ssl, SSL_CTX_get_verify_mode(SSL_get_SSL_CTX(ssl)),
-			SSL_CTX_get_verify_callback(SSL_get_SSL_CTX(ssl)));
+		wolfSSL_set_verify(ssl, wolfSSL_CTX_get_verify_mode(wolfSSL_get_SSL_CTX(ssl)),
+			wolfSSL_CTX_get_verify_callback(wolfSSL_get_SSL_CTX(ssl)));
+
 	}
 
 	LM_DBG("tls_server_name_cb return SSL_TLSEXT_ERR_OK");
@@ -980,7 +975,7 @@ static int ksr_tls_fix_domain(tls_domain_t* d, tls_domain_t* def)
 	}
 
 	procs_no=get_max_procs();
-	d->ctx = (SSL_CTX**)shm_malloc(sizeof(SSL_CTX*) * procs_no);
+	d->ctx = (WOLFSSL_CTX**)shm_malloc(sizeof(WOLFSSL_CTX*) * procs_no);
 	if (!d->ctx) {
 		ERR("%s: Cannot allocate shared memory\n", tls_domain_str(d));
 		return -1;
@@ -990,12 +985,12 @@ static int ksr_tls_fix_domain(tls_domain_t* d, tls_domain_t* def)
 	} else {
 		LM_DBG("using one tls method version: %d\n", d->method);
 	}
-	memset(d->ctx, 0, sizeof(SSL_CTX*) * procs_no);
+	memset(d->ctx, 0, sizeof(WOLFSSL_CTX*) * procs_no);
 	for(i = 0; i < procs_no; i++) {
 
 		/* libssl >= 1.1.0 */
 		//d->ctx[i] = SSL_CTX_new(sr_tls_methods[d->method - 1].TLSMethod);
-		d->ctx[i] = SSL_CTX_new(wolfSSLv23_server_method_ex(NULL));
+		d->ctx[i] = wolfSSL_CTX_new(wolfSSLv23_server_method_ex(NULL));
 		if (d->ctx[i] == NULL) {
 			unsigned long e = 0;
 			e = ERR_peek_last_error();
@@ -1004,6 +999,7 @@ static int ksr_tls_fix_domain(tls_domain_t* d, tls_domain_t* def)
 					ERR_reason_error_string(e));
 			return -1;
 		}
+		wolfSSL_CTX_set_min_proto_version(d->ctx[i], TLS1_2_VERSION);
 #if 0	     
 		if(d->method>TLS_USE_TLSvRANGE) {
 			if(sr_tls_methods[d->method - 1].TLSMethodMin) {
@@ -1029,14 +1025,14 @@ static int ksr_tls_fix_domain(tls_domain_t* d, tls_domain_t* def)
 		*/
 		if ((d->type & TLS_DOMAIN_SRV)
 				&& (d->server_name.len>0 || (d->type & TLS_DOMAIN_DEF))) {
-			if (!SSL_CTX_set_tlsext_servername_callback(d->ctx[i], tls_server_name_cb)) {
+			if (!wolfSSL_CTX_set_tlsext_servername_callback(d->ctx[i], tls_server_name_cb)) {
 				LM_ERR("register server_name callback handler for socket "
 					"[%s:%d], server_name='%s' failed for proc %d\n",
 					ip_addr2a(&d->ip), d->port,
 					(d->server_name.s)?d->server_name.s:"<default>", i);
 				return -1;
 			}
-			if (!SSL_CTX_set_tlsext_servername_arg(d->ctx[i], d)) {
+			if (!wolfSSL_CTX_set_servername_arg(d->ctx[i], d)) {
 				LM_ERR("register server_name callback handler data for socket "
 					"[%s:%d], server_name='%s' failed for proc %d\n",
 					ip_addr2a(&d->ip), d->port,
@@ -1078,7 +1074,7 @@ static map_void_t private_key_map;
  * @param p SSL_CTX*
  * @return EVP_PKEY on success, NULL on error
  */
-EVP_PKEY* tls_lookup_private_key(SSL_CTX* ctx)
+EVP_PKEY* tls_lookup_private_key(WOLFSSL_CTX* ctx)
 {
 	void *pkey;
 	char ctx_str[64];
@@ -1134,7 +1130,7 @@ static int load_engine_private_key(tls_domain_t* d)
 				if (pkey) {
 					map_set(&private_key_map, ctx_str, pkey);
 					// store the key for i = 0 to perform certificate sanity check
-					ret_pwd = SSL_CTX_use_PrivateKey(d->ctx[i], pkey);
+					ret_pwd = wolfSSL_CTX_use_PrivateKey(d->ctx[i], pkey);
 				} else {
 					ret_pwd = 0;
 				}
@@ -1155,7 +1151,7 @@ static int load_engine_private_key(tls_domain_t* d)
 			TLS_ERR("load_private_key:");
 			return -1;
 		}
-		if (i == 0 && !SSL_CTX_check_private_key(d->ctx[i])) {
+		if (i == 0 && !wolfSSL_CTX_check_private_key(d->ctx[i])) {
 			ERR("%s: Key '%s' does not match the public key of the"
 			    " certificate\n", tls_domain_str(d), d->pkey_file.s);
 			TLS_ERR("load_engine_private_key:");
@@ -1194,13 +1190,13 @@ static int load_private_key(tls_domain_t* d)
 			// in PROC_INIT skip loading HSM keys due to
 			// fork() issues with PKCS#11 libaries
 			if (strncmp(d->pkey_file.s, "/engine:", 8) != 0) {
-				ret_pwd = SSL_CTX_use_PrivateKey_file(d->ctx[i], d->pkey_file.s,
+				ret_pwd = wolfSSL_CTX_use_PrivateKey_file(d->ctx[i], d->pkey_file.s,
 					SSL_FILETYPE_PEM);
 			} else {
 				ret_pwd = 1;
 			}
 #else
-			ret_pwd = SSL_CTX_use_PrivateKey_file(d->ctx[i], d->pkey_file.s,
+			ret_pwd = wolfSSL_CTX_use_PrivateKey_file(d->ctx[i], d->pkey_file.s,
 					SSL_FILETYPE_PEM);
 #endif
 			if (ret_pwd) {
@@ -1225,7 +1221,7 @@ static int load_private_key(tls_domain_t* d)
 			continue;
 		}
 #endif
-		if (!SSL_CTX_check_private_key(d->ctx[i])) {
+		if (!wolfSSL_CTX_check_private_key(d->ctx[i])) {
 			ERR("%s: Key '%s' does not match the public key of the"
 					" certificate\n", tls_domain_str(d), d->pkey_file.s);
 			TLS_ERR("load_private_key:");
@@ -1379,7 +1375,7 @@ int tls_fix_domains_cfg(tls_domains_cfg_t* cfg, tls_domain_t* srv_defaults,
 		return -1;
 	}
 	/* set options for SSL_write:
-		SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER - needed when queueing
+		WOLFSSL_MODE_ACCEPT_MOVING_WRITE_BUFFER - needed when queueing
 		  clear text for a future write (WANTS_READ). In this case the
 		  buffer address will change for the repeated SSL_write() and
 		  without this option it will trigger the openssl sanity checks.
@@ -1387,10 +1383,10 @@ int tls_fix_domains_cfg(tls_domains_cfg_t* cfg, tls_domain_t* srv_defaults,
 		  huge multi-record writes that don't fit in the default buffer
 		  (the default buffer must have space for at least 1 record) */
 	if (tls_foreach_CTX_in_cfg(cfg, tls_ssl_ctx_mode,
-								SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+								WOLFSSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
 								SSL_MODE_ENABLE_PARTIAL_WRITE,
 								0) < 0) {
-		ERR("could not set SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER and"
+		ERR("could not set WOLFSSL_MODE_ACCEPT_MOVING_WRITE_BUFFER and"
 				" SSL_MODE_ENABLE_PARTIAL_WRITE\n");
 		return -1;
 	}

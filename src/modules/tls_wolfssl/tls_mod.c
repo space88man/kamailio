@@ -474,18 +474,18 @@ int ksr_rand_engine_param(modparam_t type, void* val)
 	LM_DBG("random engine: %.*s\n", reng->len, reng->s);
 	if(reng->len == 5 && strncasecmp(reng->s, "krand", 5) == 0) {
 		LM_DBG("setting krand random engine\n");
-		RAND_set_rand_method(RAND_ksr_krand_method());
+		wolfSSL_RAND_set_rand_method(RAND_ksr_krand_method());
 	} else if(reng->len == 8 && strncasecmp(reng->s, "fastrand", 8) == 0) {
 		LM_DBG("setting fastrand random engine\n");
-		RAND_set_rand_method(RAND_ksr_fastrand_method());
+		wolfSSL_RAND_set_rand_method(RAND_ksr_fastrand_method());
 	} else if (reng->len == 10 && strncasecmp(reng->s, "cryptorand", 10) == 0) {
 		LM_DBG("setting cryptorand random engine\n");
-		RAND_set_rand_method(RAND_ksr_cryptorand_method());
+		wolfSSL_RAND_set_rand_method(RAND_ksr_cryptorand_method());
 	}
 
 	/* WOLFFIX else if (reng->len == 8 && strncasecmp(reng->s, "kxlibssl", 8) == 0) {
 		LM_DBG("setting kxlibssl random engine\n");
-		RAND_set_rand_method(RAND_ksr_kxlibssl_method());
+		wolfSSL_RAND_set_rand_method(RAND_ksr_kxlibssl_method());
 		} */
 
 	return 0;
@@ -528,7 +528,7 @@ static int ki_is_peer_verified(sip_msg_t* msg)
 
 	ssl = ((struct tls_extra_data*)c->extra_data)->ssl;
 
-	ssl_verify = SSL_get_verify_result(ssl);
+	ssl_verify = wolfSSL_get_verify_result(ssl);
 	if ( ssl_verify != X509_V_OK ) {
 		LM_WARN("verification of presented certificate failed... return -1\n");
 		tcpconn_put(c);
@@ -538,7 +538,7 @@ static int ki_is_peer_verified(sip_msg_t* msg)
 	/* now, we have only valid peer certificates or peers without certificates.
 	 * Thus we have to check for the existence of a peer certificate
 	 */
-	x509_cert = SSL_get_peer_certificate(ssl);
+	x509_cert = wolfSSL_get_peer_certificate(ssl);
 	if ( x509_cert == NULL ) {
 		LM_INFO("tlsops:is_peer_verified: WARNING: peer did not present "
 			"a certificate. Thus it could not be verified... return -1\n");
@@ -635,7 +635,7 @@ int mod_register(char *path, int *dlflags, void *p1, void *p2)
 	register_tls_hooks(&tls_h);
 
 	LM_DBG("setting cryptorand random engine\n");
-	RAND_set_rand_method(RAND_ksr_cryptorand_method());
+	wolfSSL_RAND_set_rand_method(RAND_ksr_cryptorand_method());
 
 	sr_kemi_modules_add(sr_kemi_tls_exports);
 

@@ -34,7 +34,7 @@
 #include "tls_dump_vf.h"
 
 #include <wolfssl/options.h>
-#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
 #include "../../core/dprint.h"
 #include "tls_mod.h"
 #include "tls_cfg.h"

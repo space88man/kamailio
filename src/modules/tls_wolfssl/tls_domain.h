@@ -112,7 +112,7 @@ typedef struct tls_domain {
 	int type;
 	struct ip_addr ip;
 	unsigned short port;
-	SSL_CTX** ctx;
+	WOLFSSL_CTX** ctx;
 	str cert_file;
 	str pkey_file;
 	int verify_cert;

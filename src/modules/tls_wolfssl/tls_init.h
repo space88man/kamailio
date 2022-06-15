@@ -28,7 +28,7 @@
 #define _TLS_INIT_H
 
 #include <wolfssl/options.h>
-#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
 #include "../../core/ip_addr.h"
 #include "tls_domain.h"
 

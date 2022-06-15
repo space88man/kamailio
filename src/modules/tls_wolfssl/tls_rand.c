@@ -74,7 +74,7 @@ static int ksr_krand_status(void)
     return 1;
 }
 
-const RAND_METHOD _ksr_krand_method = {
+const WOLFSSL_RAND_METHOD _ksr_krand_method = {
     NULL,
     ksr_krand_bytes,
     NULL,
@@ -83,7 +83,7 @@ const RAND_METHOD _ksr_krand_method = {
     ksr_krand_status
 };
 
-const RAND_METHOD *RAND_ksr_krand_method(void)
+const WOLFSSL_RAND_METHOD *RAND_ksr_krand_method(void)
 {
     return &_ksr_krand_method;
 }
@@ -126,7 +126,7 @@ static int ksr_fastrand_status(void)
     return 1;
 }
 
-const RAND_METHOD _ksr_fastrand_method = {
+const WOLFSSL_RAND_METHOD _ksr_fastrand_method = {
     NULL,
     ksr_fastrand_bytes,
     NULL,
@@ -135,7 +135,7 @@ const RAND_METHOD _ksr_fastrand_method = {
     ksr_fastrand_status
 };
 
-const RAND_METHOD *RAND_ksr_fastrand_method(void)
+const WOLFSSL_RAND_METHOD *RAND_ksr_fastrand_method(void)
 {
     return &_ksr_fastrand_method;
 }
@@ -167,7 +167,7 @@ static int ksr_cryptorand_status(void)
  * We don't have a dedicated function for pseudo-random
  * bytes, just use the secure version as well for it.
  */
-const RAND_METHOD _ksr_cryptorand_method = {
+const WOLFSSL_RAND_METHOD _ksr_cryptorand_method = {
     NULL,
     ksr_cryptorand_bytes,
     NULL,
@@ -176,7 +176,7 @@ const RAND_METHOD _ksr_cryptorand_method = {
     ksr_cryptorand_status
 };
 
-const RAND_METHOD *RAND_ksr_cryptorand_method(void)
+const WOLFSSL_RAND_METHOD *RAND_ksr_cryptorand_method(void)
 {
     return &_ksr_cryptorand_method;
 }
@@ -188,7 +188,7 @@ const RAND_METHOD *RAND_ksr_cryptorand_method(void)
 #if 0
 static int _ksr_kxlibssl_local_pid = 0;
 gen_lock_t *_ksr_kxlibssl_local_lock = 0;
-const RAND_METHOD *_ksr_kxlibssl_local_method = 0;
+const WOLFSSL_RAND_METHOD *_ksr_kxlibssl_local_method = 0;
 
 void ksr_kxlibssl_init(void)
 {
@@ -342,9 +342,9 @@ int ksr_kxlibssl_status(void)
 	return ret;
 }
 
-static RAND_METHOD _ksr_kxlibssl_method = {0};
+static WOLFSSL_RAND_METHOD _ksr_kxlibssl_method = {0};
 
-const RAND_METHOD *RAND_ksr_kxlibssl_method(void)
+const WOLFSSL_RAND_METHOD *RAND_ksr_kxlibssl_method(void)
 {
 	ksr_kxlibssl_init();
 	if(_ksr_kxlibssl_local_lock == 0 || _ksr_kxlibssl_local_method == 0) {

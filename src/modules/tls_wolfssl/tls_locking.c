@@ -25,7 +25,6 @@
 
 
 #include <stdlib.h> /* abort() */
-#include <openssl/crypto.h>
 #include "../../core/dprint.h"
 #include "../../core/locking.h"
 

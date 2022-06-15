@@ -140,9 +140,9 @@ static void tls_list(rpc_t* rpc, void* c)
 					"dst_ip", dst_ip,
 					"dst_port", con->rcv.dst_port);
 			if (tls_d) {
-				if(SSL_get_current_cipher(tls_d->ssl)) {
-					tls_info = SSL_CIPHER_description(
-									SSL_get_current_cipher(tls_d->ssl),
+				if(wolfSSL_get_current_cipher(tls_d->ssl)) {
+					tls_info = wolfSSL_CIPHER_description(
+									wolfSSL_get_current_cipher(tls_d->ssl),
 									buf, sizeof(buf));
 					len = strlen(buf);
 					if (len && buf[len - 1] == '\n') buf[len - 1] = '\0';

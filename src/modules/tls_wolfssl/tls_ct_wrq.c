@@ -30,8 +30,6 @@
 #include "tls_server.h"
 #include "../../core/atomic_ops.h"
 #include "../../core/mem/shm_mem.h"
-#include <wolfssl/openssl/err.h>
-#include <wolfssl/openssl/ssl.h>
 
 
 atomic_t* tls_total_ct_wq; /* total clear text bytes queued for a future
@@ -103,21 +101,21 @@ static int ssl_flush(void* tcp_c, void* error, const void* buf, unsigned size)
 	if (unlikely(tls_c->state == S_TLS_CONNECTING)) {
 		n = tls_connect(tcp_c, &ssl_error);
 		if (unlikely(n>=1)) {
-			n = SSL_write(ssl, buf, size);
+			n = wolfSSL_write(ssl, buf, size);
 			if (unlikely(n <= 0))
-				ssl_error = SSL_get_error(ssl, n);
+				ssl_error = wolfSSL_get_error(ssl, n);
 		}
 	} else if (unlikely(tls_c->state == S_TLS_ACCEPTING)) {
 		n = tls_accept(tcp_c, &ssl_error);
 		if (unlikely(n>=1)) {
-			n = SSL_write(ssl, buf, size);
+			n = wolfSSL_write(ssl, buf, size);
 			if (unlikely(n <= 0))
-				ssl_error = SSL_get_error(ssl, n);
+				ssl_error = wolfSSL_get_error(ssl, n);
 		}
 	} else {
-		n = SSL_write(ssl, buf, size);
+		n = wolfSSL_write(ssl, buf, size);
 		if (unlikely(n <= 0))
-			ssl_error = SSL_get_error(ssl, n);
+			ssl_error = wolfSSL_get_error(ssl, n);
 	}
 	
 	*(long*)error = ssl_error;

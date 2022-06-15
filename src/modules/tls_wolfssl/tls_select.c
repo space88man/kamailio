@@ -34,7 +34,7 @@
 
 
 #include <wolfssl/options.h>
-#include <wolfssl/openssl/ssl.h>
+#include <wolfssl/ssl.h>
 #include <wolfssl/openssl/x509v3.h>
 #include "../../core/globals.h"
 #include "../../core/tcp_server.h"
@@ -168,7 +168,7 @@ static int get_cert(X509** cert, struct tcp_connection** c, struct sip_msg* msg,
 	}
 	ssl = get_ssl(*c);
 	if (!ssl) goto err;
-	*cert = my ? SSL_get_certificate(ssl) : SSL_get_peer_certificate(ssl);
+	*cert = my ? wolfSSL_get_certificate(ssl) : wolfSSL_get_peer_certificate(ssl);
 	if (!*cert) {
 		if (my) {
 			ERR("Unable to retrieve my TLS certificate from SSL structure\n");
@@ -202,7 +202,7 @@ static int get_cipher(str* res, sip_msg_t* msg)
 	ssl = get_ssl(c);
 	if (!ssl) goto err;
 
-	cipher.s = (char*)SSL_CIPHER_get_name(SSL_get_current_cipher(ssl));
+	cipher.s = (char*)wolfSSL_CIPHER_get_name(wolfSSL_get_current_cipher(ssl));
 	cipher.len = cipher.s ? strlen(cipher.s) : 0;
 	if (cipher.len >= 1024) {
 		ERR("Cipher name too long\n");
@@ -256,7 +256,7 @@ static int get_bits(str* res, int* i, sip_msg_t* msg)
 	ssl = get_ssl(c);
 	if (!ssl) goto err;
 
-	b = SSL_CIPHER_get_bits(SSL_get_current_cipher(ssl), 0);
+	b = wolfSSL_CIPHER_get_bits(wolfSSL_get_current_cipher(ssl), 0);
 	bits.s = int2str(b, &bits.len);
 	if (bits.len >= 1024) {
 		ERR("Bits string too long\n");
@@ -306,7 +306,7 @@ static int get_version(str* res, sip_msg_t* msg)
 	ssl = get_ssl(c);
 	if (!ssl) goto err;
 
-	version.s = (char*)SSL_get_version(ssl);
+	version.s = (char*)wolfSSL_get_version(ssl);
 	version.len = version.s ? strlen(version.s) : 0;
 	if (version.len >= 1024) {
 		ERR("Version string too long\n");
@@ -361,7 +361,7 @@ static int get_desc(str* res, sip_msg_t* msg)
 	if (!ssl) goto err;
 
 	buf[0] = '\0';
-	SSL_CIPHER_description(SSL_get_current_cipher(ssl), buf, 128);
+	wolfSSL_CIPHER_description(SSL_get_current_cipher(ssl), buf, 128);
 	res->s = buf;
 	res->len = strlen(buf);
 	tcpconn_put(c);
@@ -465,7 +465,7 @@ static int check_cert(str* res, int* ires, int local, int err, sip_msg_t* msg)
 		DBG("Verification of local certificates not supported\n");
 		goto error;
 	} else {
-		if ((cert = SSL_get_peer_certificate(ssl)) && SSL_get_verify_result(ssl) == err) {
+		if ((cert = wolfSSL_get_peer_certificate(ssl)) && SSL_get_verify_result(ssl) == err) {
 			*res = succ;
 			if (ires) *ires = 1;
 		} else {
@@ -838,7 +838,7 @@ static int get_verified_cert_chain(STACK_OF(X509)** chain, struct tcp_connection
 	}
 	ssl = get_ssl(*c);
 	if (!ssl) goto err;
-	*chain = SSL_get0_verified_chain(ssl);
+	*chain = wolfSSL_get0_verified_chain(ssl);
 	if (!*chain) {
 		ERR("Unable to retrieve peer TLS verified chain from SSL structure\n");
 		goto err;
@@ -1199,7 +1199,7 @@ static int get_tlsext_sn(str* res, sip_msg_t* msg)
 
 	buf[0] = '\0';
 
-	server_name.s = (char*)SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+	server_name.s = (char*)wolfSSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
 	if (server_name.s) {
 		server_name.len = strlen(server_name.s);
 		DBG("received server_name (TLS extension): '%.*s'\n", 
@@ -1312,8 +1312,8 @@ int pv_get_tls(struct sip_msg *msg, pv_param_t *param,
 	if (ssl == NULL) {
 		goto error;
 	}
-	cert = (param->pvn.u.isname.name.n < 5000) ? SSL_get_certificate(ssl)
-					: SSL_get_peer_certificate(ssl);
+	cert = (param->pvn.u.isname.name.n < 5000) ? wolfSSL_get_certificate(ssl)
+					: wolfSSL_get_peer_certificate(ssl);
 	if (cert == NULL) {
 		if (param->pvn.u.isname.name.n < 5000) {
 			LM_ERR("failed to retrieve my TLS certificate from SSL structure\n");
