@@ -57,7 +57,6 @@
 #include "tls_util.h"
 #include "tls_mod.h"
 #include "tls_init.h"
-#include "tls_locking.h"
 #include "tls_ct_wrq.h"
 #include "tls_cfg.h"
 
@@ -411,9 +410,6 @@ int tls_pre_init(void)
 	LM_DBG("updated memory functions - malloc: %p realloc: %p free: %p\n",
 			ser_malloc, ser_realloc, ser_free);
 
-	if (tls_init_locks()<0)
-		return -1;
-
 	init_tls_compression();
 	return 0;
 }
@@ -579,7 +575,6 @@ void tls_h_mod_destroy_f(void)
 		ERR_free_strings();
 	/* TODO: free all the ctx'es */
 	tls_destroy_cfg();
-	tls_destroy_locks();
 	tls_ct_wq_destroy();
 	/* explicit execution of libssl cleanup to avoid being executed again
 	 * by atexit(), when shm is gone */
