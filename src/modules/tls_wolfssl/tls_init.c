@@ -64,34 +64,8 @@
 static int tls_mod_preinitialized = 0;
 static int tls_mod_initialized = 0;
 
-
-/* replace openssl zlib compression with our version if necessary
- * (the openssl zlib compression uses the wrong malloc, see
- *  openssl #1468): 0.9.8-dev < version  <0.9.8e-beta1 */
-
-#ifdef TLS_KSSL_WORKARROUND
-#endif /* TLS_KSSL_WORKARROUND */
-
-/* openssl < 1. 0 */
-
-
-
-#ifndef OPENSSL_NO_COMP
 #define TLS_COMP_SUPPORT
-#else
-#undef TLS_COMP_SUPPORT
-#endif
-
-#ifndef OPENSSL_NO_KRB5
 #define TLS_KERBEROS_SUPPORT
-#else
-#undef TLS_KERBEROS_SUPPORT
-#endif
-
-
-#ifdef TLS_KSSL_WORKARROUND
-int openssl_kssl_malloc_bug=0; /* is openssl bug #1467 present ? */
-#endif
 
 sr_tls_methods_t sr_tls_methods[TLS_METHOD_MAX];
 
@@ -579,5 +553,5 @@ void tls_h_mod_destroy_f(void)
 	/* explicit execution of libssl cleanup to avoid being executed again
 	 * by atexit(), when shm is gone */
 	LM_DBG("executing openssl v1.1+ cleanup\n");
-	OPENSSL_cleanup();
+	wolfSSL_Cleanup();
 }
