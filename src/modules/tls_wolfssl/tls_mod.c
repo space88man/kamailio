@@ -144,23 +144,6 @@ tls_domain_t srv_defaults = {
 };
 
 
-#ifndef OPENSSL_NO_ENGINE
-
-typedef struct tls_engine {
-        str engine;
-        str engine_config;
-        str engine_algorithms;
-} tls_engine_t;
-#include <openssl/conf.h>
-#include <openssl/engine.h>
-
-static ENGINE *ksr_tls_engine;
-static tls_engine_t tls_engine_settings = {
-	STR_STATIC_INIT("NONE"),
-	STR_STATIC_INIT("NONE"),
-	STR_STATIC_INIT("ALL"),
-};
-#endif /* OPENSSL_NO_ENGINE */
 /*
  * Default settings for client domains when using external config file
  */
@@ -226,11 +209,6 @@ static param_export_t params[] = {
 	{"crl",                 PARAM_STR,    &default_tls_cfg.crl          },
 	{"cipher_list",         PARAM_STR,    &default_tls_cfg.cipher_list  },
 	{"connection_timeout",  PARAM_INT,    &default_tls_cfg.con_lifetime },
-#ifndef OPENSSL_NO_ENGINE
-	{"engine",              PARAM_STR,    &tls_engine_settings.engine  },
-	{"engine_config",       PARAM_STR,    &tls_engine_settings.engine_config },
-	{"engine_algorithms",   PARAM_STR,    &tls_engine_settings.engine_algorithms },
-#endif /* OPENSSL_NO_ENGINE */
 	{"tls_log",             PARAM_INT,    &default_tls_cfg.log          },
 	{"tls_debug",           PARAM_INT,    &default_tls_cfg.debug        },
 	{"session_cache",       PARAM_INT,    &default_tls_cfg.session_cache},
@@ -415,10 +393,6 @@ error:
 }
 
 
-#ifndef OPENSSL_NO_ENGINE
-static int tls_engine_init();
-int tls_fix_engine_keys(tls_domains_cfg_t*, tls_domain_t*, tls_domain_t*);
-#endif
 static int mod_child(int rank)
 {
 	if (tls_disable || (tls_domains_cfg==0))
@@ -437,21 +411,6 @@ static int mod_child(int rank)
 				return -1;
 		}
 	}
-#ifndef OPENSSL_NO_ENGINE
-	/*
-	 * after the child is fork()ed we go through the TLS domains
-	 * and fix up private keys from engine
-	 */
-	if (!strncmp(tls_engine_settings.engine.s, "NONE", 4)) return 0;
-
-	if (rank > 0) {
-		if (tls_engine_init() < 0)
-			return -1;
-		if (tls_fix_engine_keys(*tls_domains_cfg, &srv_defaults, &cli_defaults)<0)
-			return -1;
-		LM_INFO("OpenSSL Engine loaded private keys in child: %d\n", rank);
-	}
-#endif
 	return 0;
 }
 
@@ -641,93 +600,3 @@ int mod_register(char *path, int *dlflags, void *p1, void *p2)
 
 	return 0;
 }
-
-
-
-#ifndef OPENSSL_NO_ENGINE
-/*
- * initialize OpenSSL engine in child process
- * PKCS#11 libraries are not guaranteed to be fork() safe
- *
- */
-static int tls_engine_init()
-{
-	char *err, *section, *engines_section, *engine_section;
-	char *engine_id;
-	int rc;
-	long errline;
-	CONF* config;
-	STACK_OF(CONF_VALUE) *stack;
-	CONF_VALUE *confval;
-	ENGINE *e;
-
-	LM_INFO("With OpenSSL engine support %*s\n", tls_engine_settings.engine_config.len, tls_engine_settings.engine_config.s);
-
-	/*
-	 * #2839: don't use CONF_modules_load_file():
-	 * We are in the child process and the global engine linked-list
-	 * is initialized in the parent.
-	 */
-	e  = ENGINE_by_id("dynamic");
-	if (!e) {
-		err = "Error loading dynamic engine";
-		goto error;
-	}
-	engine_id = tls_engine_settings.engine.s;
-
-	config = NCONF_new(NULL);
-	rc = NCONF_load(config, tls_engine_settings.engine_config.s, &errline);
-	if (!rc) {
-		err = "Error loading OpenSSL configuration file";
-		goto error;
-	}
-
-	section = NCONF_get_string(config, NULL, "kamailio");
-	engines_section = NCONF_get_string(config, section, "engines");
-	engine_section = NCONF_get_string(config, engines_section, engine_id);
-	stack = NCONF_get_section(config, engine_section);
-
-	if (!ENGINE_ctrl_cmd_string(e, "SO_PATH", NCONF_get_string(config, engine_section, "dynamic_path"), 0)) {
-		err = "SO_PATH";
-		goto error;
-	}
-	if (!ENGINE_ctrl_cmd_string(e, "ID", engine_id, 0)) {
-		err = "ID";
-		goto error;
-	}
-	if (!ENGINE_ctrl_cmd(e, "LOAD", 1, NULL, NULL, 0)) {
-		err = "LOAD";
-		goto error;
-	}
-	while((confval = sk_CONF_VALUE_pop(stack))) {
-		if (strcmp(confval->name, "dynamic_path") == 0) continue;
-		LM_DBG("Configuring OpenSSL engine %s: %s(%s)\n", engine_id, confval->name, confval->value);
-		if (!ENGINE_ctrl_cmd_string(e, confval->name, confval->value, 0)) {
-			err = confval->name;
-			goto error;
-		}
-	}
-
-	if (!ENGINE_init(e)) {
-		err = "ENGINE_init()";
-		goto error;
-	}
-	if (strncmp(tls_engine_settings.engine_algorithms.s, "NONE", 4)) {
-		rc = ENGINE_set_default_string(e, tls_engine_settings.engine_algorithms.s);
-		if (!rc) {
-			err = "OpenSSL ENGINE could not set algorithms";
-			goto error;
-		}
-	}
-	ENGINE_free(e);
-	ksr_tls_engine = e;
-	return 0;
-error:
-	LM_ERR("TLS Engine: %s\n", err);
-	return -1;
-}
-
-EVP_PKEY *tls_engine_private_key(const char* key_id) {
-	return ENGINE_load_private_key(ksr_tls_engine, key_id, NULL, NULL);
-}
-#endif
