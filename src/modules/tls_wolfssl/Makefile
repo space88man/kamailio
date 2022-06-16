@@ -7,7 +7,7 @@
 include ../../Makefile.defs
 auto_gen=
 NAME=tls_wolfssl.so
-DEFS += -DOPENSSL_NO_ENGINE
+
 # set to yes when wanting to link with static libraries
 LIBSSL_STATIC ?= no
 # set to yes when wanting to link with static libraries compiled from source
