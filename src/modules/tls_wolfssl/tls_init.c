@@ -465,6 +465,8 @@ int tls_h_mod_init_f(void)
 		low_mem_threshold2=256*1024*get_max_procs();
 	}else
 		low_mem_threshold2*=1024; /* KB */
+
+#if 0
 	if ((low_mem_threshold1==0) || (low_mem_threshold2==0))
 	 LM_WARN("tls: openssl bug #1491 (crash/mem leaks on low memory)"
 				" workaround disabled\n");
@@ -473,6 +475,7 @@ int tls_h_mod_init_f(void)
 				" workaround enabled (on low memory tls operations will fail"
 				" preemptively) with free memory thresholds %d and %d bytes\n",
 				low_mem_threshold1, low_mem_threshold2);
+#endif
 
 	if (shm_available()==(unsigned long)(-1)){
 		LM_WARN(NAME " is compiled without MALLOC_STATS support:"
