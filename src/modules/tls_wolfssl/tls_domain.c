@@ -26,6 +26,9 @@
 
 #include <stdlib.h>
 
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+
 #ifndef OPENSSL_NO_ENGINE
 #include <openssl/engine.h>
 #include "tls_map.h"
