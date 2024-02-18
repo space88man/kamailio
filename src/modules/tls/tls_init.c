@@ -777,6 +777,7 @@ int tls_h_mod_randctx()
 }
 #endif /* OPENSSL_VERSION_NUMBER */
 
+extern int test_flags;
 int tls_h_mod_pre_init_f(void)
 {
 	if(tls_mod_preinitialized == 1) {
@@ -808,10 +809,13 @@ int tls_h_mod_pre_init_f(void)
          */
 	int ret;
 
-	if(ksr_tls_threads_mode == 0) {
+	if(ksr_tls_threads_mode == 0 && !(test_flags&2)) {
 		ret = tls_h_mod_randctx();
 		if(ret)
 			return ret;
+		LM_WARN("OpenSSL 3.x enable EVP_RAND_CTX threading");
+	}else{
+		LM_WARN("OpenSSL 3.x skip EVP_RAND_CTX threading");
 	}
 #endif /* OPENSSL_VERSION_NUMBER */
 

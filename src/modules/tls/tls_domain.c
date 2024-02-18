@@ -989,7 +989,7 @@ static int tls_ssl_ctx_set_read_ahead(SSL_CTX *ctx, long val, void *unused)
 	return 0;
 }
 
-
+extern int test_flags;
 #ifndef OPENSSL_NO_TLSEXT
 
 /**
@@ -1032,7 +1032,9 @@ static int tls_server_name_cb(SSL *ssl, int *ad, void *private)
 			ZSW(new_domain->server_name.s), new_domain->ctx[process_no],
 			new_domain,
 			(new_domain->type & TLS_DOMAIN_DEF) ? " (default)" : "");
-	SSL_set_SSL_CTX(ssl, new_domain->ctx[process_no]);
+
+	// test_flags: 8 SHARED_SSL_CTX
+	SSL_set_SSL_CTX(ssl, new_domain->ctx[(test_flags&8)?0 : process_no]);
 	/* SSL_set_SSL_CTX only sets the correct certificate parameters, but does
 	   set the proper verify options. Thus this will be done manually! */
 

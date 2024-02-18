@@ -34,6 +34,8 @@
 #define _GNU_SOURCE
 #include <pthread.h>
 #include <dlfcn.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #endif
 
 #include <stdio.h>
@@ -2063,6 +2065,7 @@ static int calc_proc_no(void)
 					;
 }
 
+int test_flags = 0;
 int main(int argc, char **argv)
 {
 
@@ -2106,6 +2109,9 @@ int main(int argc, char **argv)
 			{"atexit", required_argument, 0, KARGOPTVAL + 10},
 			{"all-errors", no_argument, 0, KARGOPTVAL + 11}, {0, 0, 0, 0}};
 
+	char *flag_s;
+	if ((flag_s = getenv("KAMAILIO_TEST_FLAG")))
+		test_flags = atoi(flag_s);
 	if(argc > 1) {
 		/* checks for common wrong arguments */
 		if(strcasecmp(argv[1], "start") == 0) {
@@ -3303,5 +3309,23 @@ int SYMBOL_EXPORT pthread_rwlock_init(pthread_rwlock_t *__restrict __rwlock,
 	pthread_rwlockattr_destroy(&attr);
 
 	return ret;
+}
+
+pthread_t SYMBOL_EXPORT pthread_self()
+{
+	static pthread_t (*real_pthread_self)() = 0;
+
+	if(!real_pthread_self) {
+		real_pthread_self = dlsym(RTLD_NEXT, "pthread_self");
+		if(!real_pthread_self) {
+			return (unsigned long int)-1L;
+		}
+	}
+
+	// test_flags: 4 PTHREAD_SELF
+	if (test_flags&4)
+		return (getpid() << sizeof(pid_t)) | syscall(SYS_gettid);
+	else
+		return real_pthread_self();
 }
 #endif

@@ -443,6 +443,7 @@ int tls_fix_engine_keys(tls_domains_cfg_t *, tls_domain_t *, tls_domain_t *);
  *
  * EC operations do not use pthread_self(), so could use shared SSL_CTX
  */
+extern int test_flags;
 static int mod_child(int rank)
 {
 	if(tls_disable || (tls_domains_cfg == 0))
@@ -457,6 +458,13 @@ static int mod_child(int rank)
 			|| (rank == PROC_INIT && !ksr_tls_threads_mode)) {
 #else
 	if(rank == PROC_INIT) {
+#endif
+#if OPENSSL_VERSION_NUMBER >= 0x030000000L
+		// test_flags: 1 OSSL_NEW
+		if(rank == PROC_SIPINIT && (test_flags&1)) {
+			OSSL_LIB_CTX *ctx = OSSL_LIB_CTX_new();
+			OSSL_LIB_CTX_set0_default(ctx);
+		}
 #endif
 		LM_DBG("Loading SSL_CTX in process_no=%d rank=%d "
 			   "ksr_tls_threads_mode=%d\n",
@@ -688,9 +696,13 @@ int mod_register(char *path, int *dlflags, void *p1, void *p2)
          */
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L \
 		&& OPENSSL_VERSION_NUMBER < 0x030000000L
-	if(ksr_tls_threads_mode == 0) {
+
+	// test_flags: 2 SKIP_RANDOM
+	if(ksr_tls_threads_mode == 0 && !(test_flags&2)) {
 		LM_WARN("OpenSSL 1.1.1 setting cryptorand random engine\n");
 		RAND_set_rand_method(RAND_ksr_cryptorand_method());
+	} else {
+		LM_WARN("OpenSSL 1.1.1 skip cryptorand random engine\n");
 	}
 #endif
 

@@ -29,6 +29,7 @@
 #include <poll.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <pthread.h>
 #include "../../core/dprint.h"
 #include "../../core/ip_addr.h"
 #include "../../core/mem/shm_mem.h"
@@ -223,6 +224,7 @@ static str *tls_get_connect_server_name(void)
  * WARNING: the connection should be already locked.
  * @return 0 on success, -1 on error.
  */
+extern int test_flags;
 static int tls_complete_init(struct tcp_connection *c)
 {
 	tls_domain_t *dom;
@@ -282,7 +284,13 @@ static int tls_complete_init(struct tcp_connection *c)
 	}
 	memset(data, '\0', sizeof(struct tls_extra_data));
 	tls_openssl_clear_errors();
-	data->ssl = SSL_new(dom->ctx[process_no]);
+
+	int choice = process_no;
+	// test_flags: 8 SHARED_SSL_CTX
+	if (test_flags&8)
+		choice = 0;
+	LM_WARN("using%s SSL_CTX = %p self = 0x%lx\n", choice? "": " shared", dom->ctx[choice], pthread_self());
+	data->ssl = SSL_new(dom->ctx[choice]);
 	data->rwbio = tls_BIO_new_mbuf(0, 0);
 	data->cfg = cfg;
 	data->state = state;
