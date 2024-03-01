@@ -448,10 +448,11 @@ int tls_fix_engine_keys(tls_domains_cfg_t *, tls_domain_t *, tls_domain_t *);
  *
  * EC operations do not use pthread_self(), so could use shared SSL_CTX
  */
+int tls_rank __attribute__((visibility("hidden")));
 static int mod_child_hook(int *rank, void *dummy)
 {
-	LM_DBG("Loading SSL_CTX in process_no=%d rank=%d "
-		   "ksr_tls_threads_mode=%d\n",
+	LM_INFO("Loading SSL_CTX in process_no=%d rank=%d "
+			"ksr_tls_threads_mode=%d\n",
 			process_no, *rank, ksr_tls_threads_mode);
 	if(cfg_get(tls, tls_cfg, config_file).s) {
 		if(tls_fix_domains_cfg(*tls_domains_cfg, &srv_defaults, &cli_defaults)
@@ -466,6 +467,8 @@ static int mod_child_hook(int *rank, void *dummy)
 
 static int mod_child(int rank)
 {
+	int ret;
+	tls_rank = rank;
 	if(tls_disable || (tls_domains_cfg == 0))
 		return 0;
 
@@ -474,7 +477,13 @@ static int mod_child(int rank)
          * to avoid init of libssl in thread#1: ksr_tls_threads_mode = 1
          */
 	if(rank == PROC_INIT) {
-		return run_thread4PP((_thread_proto4PP)mod_child_hook, &rank, NULL);
+		return run_thread4PP(
+				(_thread_proto4PP)&mod_child_hook, &tls_rank, NULL);
+	}
+	if(rank > 0) {
+		ret = mod_child_hook(&tls_rank, NULL);
+		if(ret)
+			return ret;
 	}
 
 #ifdef KSR_SSL_ENGINE
