@@ -226,7 +226,8 @@ void tls_free_domain(tls_domain_t *d)
 
 	if(!d)
 		return;
-	if(d->ctx) {
+	/* SSL_CTX allocated in child */
+	if(0 && d->ctx) {
 		procs_no = get_max_procs();
 		for(i = 0; i < procs_no; i++) {
 			if(d->ctx[i])
@@ -581,19 +582,22 @@ int fix_shm_pathname(str *path)
  * @param d domain
  * @return 0 if not configured or on success, -1 on error
  */
+extern int tls_rank;
 static int load_cert(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 
 	if(!d->cert_file.s || !d->cert_file.len) {
 		DBG("%s: No certificate configured\n", tls_domain_str(d));
 		return 0;
 	}
-	if(fix_shm_pathname(&d->cert_file) < 0)
-		return -1;
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+	if(tls_rank < 0) {
+		if(fix_shm_pathname(&d->cert_file) < 0)
+			return -1;
+		return 0;
+	}
+
+	for(i = process_no; i < process_no + 1; i++) {
 		if(!SSL_CTX_use_certificate_chain_file(d->ctx[i], d->cert_file.s)) {
 			ERR("%s: Unable to load certificate file '%s'\n", tls_domain_str(d),
 					d->cert_file.s);
@@ -613,7 +617,6 @@ static int load_cert(tls_domain_t *d)
 static int load_ca_list(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 
 	if((!d->ca_file.s || !d->ca_file.len)
 			&& (!d->ca_path.s || !d->ca_path.len)) {
@@ -624,8 +627,10 @@ static int load_ca_list(tls_domain_t *d)
 		return -1;
 	if(d->ca_path.s && d->ca_path.len > 0 && fix_shm_pathname(&d->ca_path) < 0)
 		return -1;
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+	if(tls_rank < 0)
+		return 0;
+
+	for(i = process_no; i < process_no + 1; i++) {
 		if(SSL_CTX_load_verify_locations(d->ctx[i], d->ca_file.s, d->ca_path.s)
 				!= 1) {
 			ERR("%s: Unable to load CA list file '%s' dir '%s'\n",
@@ -658,19 +663,21 @@ static int load_ca_list(tls_domain_t *d)
 static int load_crl(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 	X509_STORE *store;
 
 	if(!d->crl_file.s) {
 		DBG("%s: No CRL configured\n", tls_domain_str(d));
 		return 0;
 	}
-	if(fix_shm_pathname(&d->crl_file) < 0)
-		return -1;
-	LOG(L_INFO, "%s: Certificate revocation lists will be checked (%.*s)\n",
-			tls_domain_str(d), d->crl_file.len, d->crl_file.s);
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+	if(tls_rank < 0) {
+		if(fix_shm_pathname(&d->crl_file) < 0)
+			return -1;
+		LOG(L_INFO, "%s: Certificate revocation lists will be checked (%.*s)\n",
+				tls_domain_str(d), d->crl_file.len, d->crl_file.s);
+		return 0;
+	}
+
+	for(i = process_no; i < process_no + 1; i++) {
 		if(SSL_CTX_load_verify_locations(d->ctx[i], d->crl_file.s, 0) != 1) {
 			ERR("%s: Unable to load certificate revocation list '%s'\n",
 					tls_domain_str(d), d->crl_file.s);
@@ -698,35 +705,37 @@ static int load_crl(tls_domain_t *d)
 static int set_cipher_list(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 	char *cipher_list;
 
 	cipher_list = d->cipher_list.s;
+	if(tls_rank < 0) {
 #ifdef TLS_KSSL_WORKAROUND
-	if(openssl_kssl_malloc_bug) { /* is openssl bug #1467 present ? */
-		if(d->cipher_list.s == 0) {
-			/* use "DEFAULT:!KRB5" */
-			cipher_list = "DEFAULT:!KRB5";
-		} else {
-			/* append ":!KRB5" */
-			cipher_list =
-					shm_malloc(d->cipher_list.len + C_NO_KRB5_SUFFIX_LEN + 1);
-			if(cipher_list) {
-				memcpy(cipher_list, d->cipher_list.s, d->cipher_list.len);
-				memcpy(cipher_list + d->cipher_list.len, C_NO_KRB5_SUFFIX,
-						C_NO_KRB5_SUFFIX_LEN);
-				cipher_list[d->cipher_list.len + C_NO_KRB5_SUFFIX_LEN] = 0;
-				shm_free(d->cipher_list.s);
-				d->cipher_list.s = cipher_list;
-				d->cipher_list.len += C_NO_KRB5_SUFFIX_LEN;
+		if(openssl_kssl_malloc_bug) { /* is openssl bug #1467 present ? */
+			if(d->cipher_list.s == 0) {
+				/* use "DEFAULT:!KRB5" */
+				cipher_list = "DEFAULT:!KRB5";
+			} else {
+				/* append ":!KRB5" */
+				cipher_list = shm_malloc(
+						d->cipher_list.len + C_NO_KRB5_SUFFIX_LEN + 1);
+				if(cipher_list) {
+					memcpy(cipher_list, d->cipher_list.s, d->cipher_list.len);
+					memcpy(cipher_list + d->cipher_list.len, C_NO_KRB5_SUFFIX,
+							C_NO_KRB5_SUFFIX_LEN);
+					cipher_list[d->cipher_list.len + C_NO_KRB5_SUFFIX_LEN] = 0;
+					shm_free(d->cipher_list.s);
+					d->cipher_list.s = cipher_list;
+					d->cipher_list.len += C_NO_KRB5_SUFFIX_LEN;
+				}
 			}
 		}
-	}
 #endif /* TLS_KSSL_WORKAROUND */
+		return 0;
+	}
 	if(!cipher_list)
 		return 0;
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+
+	for(i = process_no; i < process_no + 1; i++) {
 		if(SSL_CTX_set_cipher_list(d->ctx[i], cipher_list) == 0) {
 			ERR("%s: Failure to set SSL context cipher list \"%s\"\n",
 					tls_domain_str(d), cipher_list);
@@ -751,7 +760,9 @@ static int set_cipher_list(tls_domain_t *d)
 static int set_verification(tls_domain_t *d)
 {
 	int verify_mode, i;
-	int procs_no;
+
+	if(tls_rank < 0)
+		return 0;
 
 	if(d->require_cert || d->verify_client == TLS_VERIFY_CLIENT_ON) {
 		verify_mode = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
@@ -784,8 +795,7 @@ static int set_verification(tls_domain_t *d)
 		}
 	}
 
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+	for(i = process_no; i < process_no + 1; i++) {
 		if(d->verify_client >= TLS_VERIFY_CLIENT_OPTIONAL_NO_CA) {
 			/* Note that actual verification result is available in $tls_peer_verified */
 			SSL_CTX_set_verify(d->ctx[i], verify_mode,
@@ -843,14 +853,15 @@ static void sr_ssl_ctx_info_callback(const SSL *ssl, int event, int ret)
 static int set_ssl_options(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 	long options;
 #if OPENSSL_VERSION_NUMBER >= 0x00908000L
 	long ssl_version;
 	STACK_OF(SSL_COMP) * comp_methods;
 #endif
 
-	procs_no = get_max_procs();
+	if(tls_rank < 0)
+		return 0;
+
 	options = SSL_OP_ALL; /* all the bug workarounds by default */
 #if OPENSSL_VERSION_NUMBER >= 0x00907000L
 	options |= SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION
@@ -881,7 +892,7 @@ static int set_ssl_options(tls_domain_t *d)
 	}
 #endif
 #endif
-	for(i = 0; i < procs_no; i++) {
+	for(i = process_no; i < process_no + 1; i++) {
 		SSL_CTX_set_options(d->ctx[i], options);
 		if(sr_tls_renegotiation == 0)
 			SSL_CTX_set_info_callback(d->ctx[i], sr_ssl_ctx_info_callback);
@@ -898,12 +909,10 @@ static int set_ssl_options(tls_domain_t *d)
 static int set_session_cache(tls_domain_t *d)
 {
 	int i;
-	int procs_no;
 	str tls_session_id;
 
-	procs_no = get_max_procs();
 	tls_session_id = cfg_get(tls, tls_cfg, session_id);
-	for(i = 0; i < procs_no; i++) {
+	for(i = process_no; i < process_no + 1; i++) {
 		/* janakj: I am not sure if session cache makes sense in ser, session
 		 * cache is stored in SSL_CTX and we have one SSL_CTX per process,
 		 * thus sessions among processes will not be reused
@@ -1072,31 +1081,42 @@ static int ksr_tls_fix_domain(tls_domain_t *d, tls_domain_t *def)
 {
 	int i;
 	int procs_no;
+	static int return_skip = 0;
 
-	if(ksr_tls_fill_missing(d, def) < 0)
-		return -1;
 
-	if(d->type & TLS_DOMAIN_ANY) {
-		if(d->server_name.s == NULL || d->server_name.len < 0) {
-			LM_ERR("%s: tls domain for any address but no server name\n",
-					tls_domain_str(d));
+	if (return_skip)
+		return return_skip;
+
+	if(tls_rank<0) {
+		if(ksr_tls_fill_missing(d, def) < 0) {
+			return_skip = -1;
 			return -1;
 		}
-	}
+		if(d->type & TLS_DOMAIN_ANY) {
+			if(d->server_name.s == NULL || d->server_name.len < 0) {
+				LM_ERR("%s: tls domain for any address but no server name\n",
+					   tls_domain_str(d));
+				return_skip = -1;
+				return -1;
+			}
+		}
 
-	procs_no = get_max_procs();
-	d->ctx = (SSL_CTX **)shm_malloc(sizeof(SSL_CTX *) * procs_no);
-	if(!d->ctx) {
-		ERR("%s: Cannot allocate shared memory\n", tls_domain_str(d));
-		return -1;
+		procs_no = get_max_procs();
+		d->ctx = (SSL_CTX **)shm_malloc(sizeof(SSL_CTX *) * procs_no);
+		if(!d->ctx) {
+			ERR("%s: Cannot allocate shared memory\n", tls_domain_str(d));
+			return_skip = -1;
+			return -1;
+		}
+		if(d->method > TLS_USE_TLSvRANGE) {
+			LM_DBG("using tls methods range: %d\n", d->method);
+		} else {
+			LM_DBG("using one tls method version: %d\n", d->method);
+		}
+		memset(d->ctx, 0, sizeof(SSL_CTX *) * procs_no);
+		return 0;
 	}
-	if(d->method > TLS_USE_TLSvRANGE) {
-		LM_DBG("using tls methods range: %d\n", d->method);
-	} else {
-		LM_DBG("using one tls method version: %d\n", d->method);
-	}
-	memset(d->ctx, 0, sizeof(SSL_CTX *) * procs_no);
-	for(i = 0; i < procs_no; i++) {
+	for(i = process_no; i < process_no + 1; i++) {
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 		/* libssl < 1.1.0 */
@@ -1312,17 +1332,18 @@ static int load_engine_private_key(tls_domain_t *d)
 static int load_private_key(tls_domain_t *d)
 {
 	int idx, ret_pwd, i;
-	int procs_no;
 
 	if(!d->pkey_file.s || !d->pkey_file.len) {
 		DBG("%s: No private key specified\n", tls_domain_str(d));
 		return 0;
 	}
-	if(fix_shm_pathname(&d->pkey_file) < 0)
-		return -1;
+	if(tls_rank < 0) {
+		if(fix_shm_pathname(&d->pkey_file) < 0)
+			return -1;
+		return 0;
+	}
 
-	procs_no = get_max_procs();
-	for(i = 0; i < procs_no; i++) {
+	for(i = process_no; i < process_no + 1; i++) {
 		SSL_CTX_set_default_passwd_cb(d->ctx[i], passwd_cb);
 		SSL_CTX_set_default_passwd_cb_userdata(d->ctx[i], d->pkey_file.s);
 

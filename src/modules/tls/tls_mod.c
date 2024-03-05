@@ -506,11 +506,17 @@ static int mod_child_hook(int *rank, void *dummy)
 static OSSL_LIB_CTX *orig_ctx;
 static OSSL_LIB_CTX *new_ctx;
 #endif
+
+int tls_rank __attribute__((visibility("hidden")));
 static int mod_child(int rank)
 {
+#ifdef KSR_SSL_PROVIDER
+	OSSL_STORE_CTX *store;
+#endif /* KSR_SSL_PROVIDER */
+
 	if(tls_disable || (tls_domains_cfg == 0))
 		return 0;
-
+	tls_rank = rank;
 	/*
          * OpenSSL 3.x/1.1.1: create shared SSL_CTX* in thread executor
          * to avoid init of libssl in thread#1: ksr_tls_threads_mode = 1
@@ -531,12 +537,23 @@ static int mod_child(int rank)
 
 	if(rank > 0) {
 #ifdef KSR_SSL_PROVIDER
+		/* Handle provider quirks here */
 		if(tls_provider_quirks & 1) {
 			new_ctx = OSSL_LIB_CTX_new();
 			orig_ctx = OSSL_LIB_CTX_set0_default(new_ctx);
 			CONF_modules_load_file(CONF_get1_default_config_file(), NULL, 0L);
 		}
+
+		/* workaround for pkcs11-provider
+		   - not recommended to use pkcs11-module-load-behavior = early
+		   - open store before SSL_CTX
+		*/
+		if(tls_provider_quirks & 2) {
+			store = OSSL_STORE_open("pkcs11:", NULL, NULL, NULL, NULL);
+			OSSL_STORE_close(store);
+		}
 #endif /* KSR_SSL_PROVIDER */
+		mod_child_hook(&rank, NULL);
 		if(tls_engine_init() < 0)
 			return -1;
 		if(tls_fix_engine_keys(*tls_domains_cfg, &srv_defaults, &cli_defaults)
