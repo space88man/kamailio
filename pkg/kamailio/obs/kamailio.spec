@@ -812,9 +812,9 @@ Requires:   python2, kamailio = %ver
 BuildRequires:  python2, python2-devel
 %endif
 %if %{with python3}
-%if 0%{?rhel} == 8
-Requires:   python39, kamailio = %ver
-BuildRequires:  python39, python39-devel
+%if 0%{?rhel} == 8 || 0%{?rhel} == 9
+Requires:   python3.12, kamailio = %ver
+BuildRequires:  python3.12, python3.12-devel
 %else
 Requires:   python3, kamailio = %ver
 BuildRequires:  python3, python3-devel
