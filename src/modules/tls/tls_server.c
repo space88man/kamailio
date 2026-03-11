@@ -542,6 +542,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 	const char *cipher_name;
 	X509 *my_cert;
 	int alg_bits;
+	STACK_OF(X509) * chain;
 
 	*error = SSL_ERROR_NONE;
 	tls_c = (struct tls_extra_data *)c->extra_data;
@@ -612,6 +613,13 @@ int tls_accept(struct tcp_connection *c, int *error)
 		}
 
 		strcpy(tls_c->ssl_version, SSL_get_version(ssl));
+
+		tls_c->ssl_cert_chain = NULL;
+		chain = SSL_get0_verified_chain(ssl);
+		if(chain) {
+			tls_c->ssl_cert_chain =
+					stack_to_pkcs7_DER(chain, &tls_c->ssl_cert_chain_len);
+		}
 	} else { /* ret == 0 or < 0 */
 		*error = SSL_get_error(ssl, ret);
 	}

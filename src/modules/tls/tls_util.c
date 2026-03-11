@@ -308,3 +308,95 @@ X509 *convert_DER_to_X509(char *der_bytes, int len)
 
 	return x;
 }
+
+char *stack_to_pkcs7_DER(STACK_OF(X509) * sk, int *out_len)
+{
+	*out_len = 0;
+	if(!sk)
+		return NULL;
+
+	// 1. Initialize the PKCS7 object as "SignedData"
+	PKCS7 *p7 = PKCS7_new();
+	if(!p7)
+		return NULL;
+
+	// This tells OpenSSL this is a container for signatures/certs
+	if(!PKCS7_set_type(p7, NID_pkcs7_signed)) {
+		PKCS7_free(p7);
+		return NULL;
+	}
+
+	// 2. Add the certificates from the stack
+	for(int i = 0; i < sk_X509_num(sk); i++) {
+		X509 *cert = sk_X509_value(sk, i);
+		// PKCS7_add_certificate is simpler than the CMS version
+		PKCS7_add_certificate(p7, cert);
+	}
+
+	// 3. Use the BIO trick to encode to DER
+	BIO *out = BIO_new(BIO_s_mem());
+	if(i2d_PKCS7_bio(out, p7) <= 0) {
+		BIO_free(out);
+		PKCS7_free(p7);
+		return NULL;
+	}
+
+	// 4. Extract buffer from BIO
+	BUF_MEM *bptr;
+	BIO_get_mem_ptr(out, &bptr);
+
+	char *der = shm_malloc(bptr->length);
+	if(der) {
+		memcpy(der, bptr->data, bptr->length);
+		*out_len = (int)bptr->length;
+	}
+
+	// Cleanup
+	BIO_free(out);
+	PKCS7_free(p7);
+
+	return der;
+}
+
+STACK_OF(X509) * pkcs7_DER_to_stack(const char *der_bytes, int len)
+{
+	if(!der_bytes || len <= 0)
+		return NULL;
+
+	// 1. Load DER bytes into a Memory BIO
+	BIO *mem = BIO_new_mem_buf(der_bytes, len);
+	if(!mem)
+		return NULL;
+
+	// 2. Parse the BIO into a PKCS7 object
+	PKCS7 *p7 = d2i_PKCS7_bio(mem, NULL);
+	BIO_free(mem); // Content is now in p7, can free the BIO
+
+	if(!p7)
+		return NULL;
+
+	// 3. Verify it is actually a SignedData type (which holds certs)
+	if(!PKCS7_type_is_signed(p7) || !p7->d.sign) {
+		PKCS7_free(p7);
+		return NULL;
+	}
+
+	// 4. Extract the certificate stack
+	// We use X509_chain_up_ref to create a new stack where the caller
+	// owns the references to the certificates.
+	STACK_OF(X509) *internal_stack = p7->d.sign->cert;
+	STACK_OF(X509) *out_stack = sk_X509_new_null();
+
+	if(internal_stack) {
+		for(int i = 0; i < sk_X509_num(internal_stack); i++) {
+			X509 *cert = sk_X509_value(internal_stack, i);
+			X509_up_ref(cert); // Increment ref count so we can free p7 safely
+			sk_X509_push(out_stack, cert);
+		}
+	}
+
+	// 5. Cleanup the container
+	PKCS7_free(p7);
+
+	return out_stack;
+}

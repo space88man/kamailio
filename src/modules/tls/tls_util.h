@@ -98,4 +98,6 @@ int ksr_tls_keylog_peer_send(const SSL *ssl, const char *line);
 int ksr_tls_keylog_vfilter_match(const char *line);
 char *convert_X509_to_DER(X509 *cert, int *len);
 X509 *convert_DER_to_X509(char *der_bytese, int len);
+char *stack_to_pkcs7_DER(STACK_OF(X509) * sk, int *out_len);
+STACK_OF(X509) * pkcs7_DER_to_stack(const char *der_bytes, int len);
 #endif /* _TLS_UTIL_H */

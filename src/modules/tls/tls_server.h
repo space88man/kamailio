@@ -78,6 +78,8 @@ typedef struct tls_extra_data
 	int ssl_my_cert_len;   /* shared memory must be free'd */
 	char *ssl_peer_cert;   /* shared memory must be free'd */
 	int ssl_peer_cert_len; /* shared memory must be free'd */
+	char *ssl_cert_chain;
+	int ssl_cert_chain_len;
 } tls_extra_data_t;
 
 
