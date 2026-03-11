@@ -566,7 +566,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 				ip_addr2a(&c->rcv.dst_ip), c->rcv.dst_port);
 
 		tls_c->ssl_verify_result = SSL_get_verify_result(ssl);
-		tls_c->ssl_has_peer_certificate = 0;
+		tls_c->ssl_peer_cert = NULL;
 		cert = SSL_get_peer_certificate(ssl);
 		if(cert != 0) {
 			tls_dump_cert_info("tls_accept: client certificate", cert);
@@ -575,7 +575,6 @@ int tls_accept(struct tcp_connection *c, int *error)
 							 "verification failed!!!\n");
 				tls_dump_verification_failure(SSL_get_verify_result(ssl));
 			}
-			tls_c->ssl_has_peer_certificate = 1;
 			tls_c->ssl_peer_cert =
 				convert_X509_to_DER(cert, &tls_c->ssl_peer_cert_len);
 			X509_free(cert);

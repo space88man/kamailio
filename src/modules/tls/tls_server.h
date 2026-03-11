@@ -73,7 +73,6 @@ typedef struct tls_extra_data
 	char ssl_version[32];
 	int ssl_cipher_bits;
 	long ssl_verify_result;
-	int ssl_has_peer_certificate;
 
 	char *ssl_my_cert;	   /* shared memory - must be free'd  */
 	int ssl_my_cert_len;   /* shared memory must be free'd */
