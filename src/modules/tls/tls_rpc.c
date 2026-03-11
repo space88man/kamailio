@@ -145,7 +145,7 @@ static void tls_list(rpc_t *rpc, void *c)
 			}
 
 			if(tls_d) {
-				sni = SSL_get_servername(tls_d->ssl, TLSEXT_NAMETYPE_host_name);
+				sni = tls_d->ssl_servername;
 				dom = tls_d->dom.s;
 				if(sni == NULL) {
 					sni = "N/A";
@@ -160,16 +160,7 @@ static void tls_list(rpc_t *rpc, void *c)
 					"src_ip", src_ip, "src_port", con->rcv.src_port, "dst_ip",
 					dst_ip, "dst_port", con->rcv.dst_port);
 			if(tls_d) {
-				if(SSL_get_current_cipher(tls_d->ssl)) {
-					tls_info = SSL_CIPHER_description(
-							SSL_get_current_cipher(tls_d->ssl), buf,
-							sizeof(buf));
-					len = strlen(buf);
-					if(len && buf[len - 1] == '\n')
-						buf[len - 1] = '\0';
-				} else {
-					tls_info = "unknown";
-				}
+				tls_info = tls_d->ssl_cipher_desc;
 				/* tls data */
 				state = "unknown/error";
 				lock_get(&con->write_lock);

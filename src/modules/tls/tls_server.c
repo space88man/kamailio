@@ -349,6 +349,8 @@ static int tls_complete_init(struct tcp_connection *c)
 		TLS_ERR_SSL("Failed to create SSL or BIO structure:", data->ssl);
 		if(data->ssl)
 			SSL_free(data->ssl);
+		if(data->ssl_servername)
+			shm_free(data->ssl_servername);
 		if(data->rwbio)
 			BIO_free(data->rwbio);
 		goto error;
@@ -359,6 +361,8 @@ static int tls_complete_init(struct tcp_connection *c)
 		if(!SSL_set_tlsext_host_name(data->ssl, sname->s)) {
 			if(data->ssl)
 				SSL_free(data->ssl);
+			if(data->ssl_servername)
+				shm_free(data->ssl_servername);
 			if(data->rwbio)
 				BIO_free(data->rwbio);
 			goto error;
@@ -381,6 +385,8 @@ static int tls_complete_init(struct tcp_connection *c)
 		LM_ERR("failed to set app_data - possible memory issue\n");
 		if(data->ssl)
 			SSL_free(data->ssl);
+		if(data->ssl_servername)
+			shm_free(data->ssl_servername);
 		if(data->rwbio)
 			BIO_free(data->rwbio);
 		goto error;
@@ -513,6 +519,9 @@ int tls_accept(struct tcp_connection *c, int *error)
 	struct tls_extra_data *tls_c;
 	int tls_log;
 
+	char *sni;
+	SSL_CIPHER *cipher;
+
 	*error = SSL_ERROR_NONE;
 	tls_c = (struct tls_extra_data *)c->extra_data;
 	ssl = tls_c->ssl;
@@ -545,6 +554,19 @@ int tls_accept(struct tcp_connection *c, int *error)
 			X509_free(cert);
 		} else {
 			LOG(tls_log, "tls_accept: client did not present a certificate\n");
+		}
+		tls_c->ssl_servername = NULL;
+		sni = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+		if(sni != NULL) {
+			tls_c->ssl_servername = shm_malloc(strlen(sni));
+			strcpy(tls_c->ssl_servername, sni);
+		}
+
+		strcpy(tls_c->ssl_cipher_desc, "unknown");
+		cipher = SSL_get_current_cipher(ssl);
+		if(cipher) {
+			SSL_CIPHER_description(cipher, tls_c->ssl_cipher_desc,
+					sizeof(tls_c->ssl_cipher_desc));
 		}
 	} else { /* ret == 0 or < 0 */
 		*error = SSL_get_error(ssl, ret);
@@ -757,6 +779,8 @@ void tls_h_tcpconn_clean_f(struct tcp_connection *c)
 	if(c->extra_data) {
 		extra = (struct tls_extra_data *)c->extra_data;
 		SSL_free(extra->ssl);
+		if(extra->ssl_servername)
+			shm_free(extra->ssl_servername);
 		atomic_dec(&extra->cfg->ref_count);
 		if(extra->ct_wq)
 			tls_ct_wq_free(&extra->ct_wq);
