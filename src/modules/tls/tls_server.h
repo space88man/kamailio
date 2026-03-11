@@ -69,6 +69,8 @@ typedef struct tls_extra_data
 
 	char *ssl_servername;
 	char ssl_cipher_desc[128];
+	long ssl_verify_result;
+	int ssl_has_peer_certificate;
 } tls_extra_data_t;
 
 

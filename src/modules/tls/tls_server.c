@@ -519,8 +519,9 @@ int tls_accept(struct tcp_connection *c, int *error)
 	struct tls_extra_data *tls_c;
 	int tls_log;
 
-	char *sni;
-	SSL_CIPHER *cipher;
+	const char *sni;
+	const SSL_CIPHER *cipher;
+	X509 *peer_cert;
 
 	*error = SSL_ERROR_NONE;
 	tls_c = (struct tls_extra_data *)c->extra_data;
@@ -567,6 +568,15 @@ int tls_accept(struct tcp_connection *c, int *error)
 		if(cipher) {
 			SSL_CIPHER_description(cipher, tls_c->ssl_cipher_desc,
 					sizeof(tls_c->ssl_cipher_desc));
+		}
+
+		tls_c->ssl_verify_result = SSL_get_verify_result(ssl);
+		tls_c->ssl_has_peer_certificate = 0;
+		peer_cert = SSL_get_peer_certificate(ssl);
+
+		if(peer_cert != NULL) {
+			tls_c->ssl_has_peer_certificate = 1;
+			X509_free(peer_cert);
 		}
 	} else { /* ret == 0 or < 0 */
 		*error = SSL_get_error(ssl, ret);

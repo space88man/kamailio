@@ -700,9 +700,8 @@ int ksr_rand_engine_param(modparam_t type, void *val)
 static int ki_is_peer_verified(sip_msg_t *msg)
 {
 	struct tcp_connection *c;
-	SSL *ssl;
+	struct tls_extra_data *tls_c;
 	long ssl_verify;
-	X509 *x509_cert;
 
 	LM_DBG("started...\n");
 	if(msg->rcv.proto != PROTO_TLS) {
@@ -732,9 +731,9 @@ static int ki_is_peer_verified(sip_msg_t *msg)
 		return -1;
 	}
 
-	ssl = ((struct tls_extra_data *)c->extra_data)->ssl;
+	tls_c = (struct tls_extra_data *)c->extra_data;
 
-	ssl_verify = SSL_get_verify_result(ssl);
+	ssl_verify = tls_c->ssl_verify_result;
 	if(ssl_verify != X509_V_OK) {
 		LM_WARN("verification of presented certificate failed... return -1\n");
 		tcpconn_put(c);
@@ -744,15 +743,12 @@ static int ki_is_peer_verified(sip_msg_t *msg)
 	/* now, we have only valid peer certificates or peers without certificates.
 	 * Thus we have to check for the existence of a peer certificate
 	 */
-	x509_cert = SSL_get_peer_certificate(ssl);
-	if(x509_cert == NULL) {
+	if(!tls_c->ssl_has_peer_certificate) {
 		LM_INFO("tlsops:is_peer_verified: WARNING: peer did not present "
 				"a certificate. Thus it could not be verified... return -1\n");
 		tcpconn_put(c);
 		return -1;
 	}
-
-	X509_free(x509_cert);
 
 	tcpconn_put(c);
 
