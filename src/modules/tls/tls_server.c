@@ -576,7 +576,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 				tls_dump_verification_failure(SSL_get_verify_result(ssl));
 			}
 			tls_c->ssl_peer_cert =
-				convert_X509_to_DER(cert, &tls_c->ssl_peer_cert_len);
+					convert_X509_to_DER(cert, &tls_c->ssl_peer_cert_len);
 			X509_free(cert);
 		} else {
 			LOG(tls_log, "tls_accept: client did not present a certificate\n");

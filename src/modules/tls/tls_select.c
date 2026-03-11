@@ -387,7 +387,7 @@ static int get_desc(str *res, sip_msg_t *msg)
 		goto err;
 
 	buf[0] = '\0';
-        strcpy(buf, extra->ssl_cipher_desc);
+	strcpy(buf, extra->ssl_cipher_desc);
 	res->s = buf;
 	res->len = strlen(buf);
 	tcpconn_put(c);
@@ -497,8 +497,7 @@ static int check_cert(str *res, long *ires, int local, int err, sip_msg_t *msg)
 		DBG("Verification of local certificates not supported\n");
 		goto error;
 	} else {
-            if(extra->ssl_peer_cert
-				&& extra->ssl_verify_result == err) {
+		if(extra->ssl_peer_cert && extra->ssl_verify_result == err) {
 			*res = succ;
 			if(ires)
 				*ires = 1;
