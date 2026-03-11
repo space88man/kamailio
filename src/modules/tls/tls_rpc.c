@@ -102,7 +102,6 @@ extern struct tcp_connection **tcpconn_id_hash;
 
 static void tls_list(rpc_t *rpc, void *c)
 {
-	char buf[128];
 	char src_ip[IP_ADDR_MAX_STR_SIZE];
 	char dst_ip[IP_ADDR_MAX_STR_SIZE];
 	void *handle;

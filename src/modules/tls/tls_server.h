@@ -68,9 +68,17 @@ typedef struct tls_extra_data
 	enum tls_conn_states state;
 
 	char *ssl_servername;
+	char *ssl_cipher_name;
 	char ssl_cipher_desc[128];
+	char ssl_version[32];
+	int ssl_cipher_bits;
 	long ssl_verify_result;
 	int ssl_has_peer_certificate;
+
+	char *ssl_my_cert;	   /* shared memory - must be free'd  */
+	int ssl_my_cert_len;   /* shared memory must be free'd */
+	char *ssl_peer_cert;   /* shared memory must be free'd */
+	int ssl_peer_cert_len; /* shared memory must be free'd */
 } tls_extra_data_t;
 
 
