@@ -743,7 +743,7 @@ static int ki_is_peer_verified(sip_msg_t *msg)
 	/* now, we have only valid peer certificates or peers without certificates.
 	 * Thus we have to check for the existence of a peer certificate
 	 */
-	if(!tls_c->ssl_has_peer_certificate) {
+	if(!tls_c->ssl_peer_cert) {
 		LM_INFO("tlsops:is_peer_verified: WARNING: peer did not present "
 				"a certificate. Thus it could not be verified... return -1\n");
 		tcpconn_put(c);

@@ -279,3 +279,32 @@ int ksr_tls_keylog_peer_send(const SSL *ssl, const char *line)
 	}
 	return 0;
 }
+
+
+char *convert_X509_to_DER(X509 *cert, int *len)
+{
+	char *result = NULL;
+	unsigned char *buf;
+
+	if(cert == NULL) {
+		*len = 0;
+		return NULL;
+	}
+
+	*len = i2d_X509(cert, NULL);
+	buf = result = shm_malloc(*len);
+	i2d_X509(cert, &buf);
+
+	return result;
+}
+
+X509 *convert_DER_to_X509(char *der_bytes, int len)
+{
+	const unsigned char *source = der_bytes;
+	if(!der_bytes)
+		return NULL;
+
+	X509 *cert = d2i_X509(NULL, &source, len);
+
+	return cert;
+}
