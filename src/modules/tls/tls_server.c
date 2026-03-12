@@ -524,6 +524,81 @@ static void tls_dump_cert_info(char *s, X509 *cert)
  *           returned and error==SSL_ERROR_NONE).
  *
  */
+static void tls_init_ssl_cache(struct tls_extra_data *tls_c)
+{
+	tls_c->ssl_servername = NULL;
+	tls_c->ssl_cipher_name = NULL;
+	tls_c->ssl_my_cert = NULL;
+	tls_c->ssl_peer_cert = NULL;
+	tls_c->ssl_cert_chain = NULL;
+	tls_c->ssl_verify_result = X509_V_ERR_UNSPECIFIED;
+	tls_c->ssl_cipher_bits = 0;
+	tls_c->ssl_version[0] = '\0';
+	tls_c->ssl_cipher_desc[0] = '\0';
+}
+
+static void tls_build_ssl_cache(struct tls_extra_data *tls_c, X509 *cert)
+{
+	SSL *ssl = tls_c->ssl;
+	const char *sni;
+	const SSL_CIPHER *cipher;
+	const char *cipher_name;
+	X509 *my_cert;
+	int alg_bits;
+	STACK_OF(X509) * chain;
+	X509 *peer_cert = NULL;
+
+	tls_c->ssl_verify_result = SSL_get_verify_result(ssl);
+
+	/* if no cert passed in, try to get it ourselves — owns the ref */
+	if(cert != NULL) {
+		/* caller passed it in — dup so we own it independently */
+		peer_cert = X509_dup(cert);
+	} else {
+		/* SSL_get_peer_certificate() increments ref — we own it */
+		peer_cert = SSL_get_peer_certificate(ssl);
+	}
+
+	if(peer_cert != NULL) {
+		tls_c->ssl_peer_cert =
+				convert_X509_to_DER(peer_cert, &tls_c->ssl_peer_cert_len);
+		X509_free(peer_cert); /* release our ref */
+	}
+
+	sni = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+	if(sni != NULL) {
+		tls_c->ssl_servername = shm_malloc(strlen(sni) + 1);
+		strcpy(tls_c->ssl_servername, sni);
+	}
+
+	strcpy(tls_c->ssl_cipher_desc, "unknown");
+	cipher = SSL_get_current_cipher(ssl);
+	if(cipher) {
+		SSL_CIPHER_description(
+				cipher, tls_c->ssl_cipher_desc, sizeof(tls_c->ssl_cipher_desc));
+		cipher_name = SSL_CIPHER_get_name(cipher);
+		if(cipher_name) {
+			tls_c->ssl_cipher_name = shm_malloc(strlen(cipher_name) + 1);
+			strcpy(tls_c->ssl_cipher_name, cipher_name);
+		}
+		tls_c->ssl_cipher_bits = SSL_CIPHER_get_bits(cipher, &alg_bits);
+	}
+
+	my_cert = SSL_get_certificate(ssl);
+	if(my_cert) {
+		tls_c->ssl_my_cert =
+				convert_X509_to_DER(my_cert, &tls_c->ssl_my_cert_len);
+	}
+
+	strcpy(tls_c->ssl_version, SSL_get_version(ssl));
+
+	chain = SSL_get0_verified_chain(ssl);
+	if(chain) {
+		tls_c->ssl_cert_chain =
+				(char *)stack_to_pkcs7_DER(chain, &tls_c->ssl_cert_chain_len);
+	}
+}
+
 int tls_accept(struct tcp_connection *c, int *error)
 {
 	int ret;
@@ -531,13 +606,6 @@ int tls_accept(struct tcp_connection *c, int *error)
 	X509 *cert;
 	struct tls_extra_data *tls_c;
 	int tls_log;
-
-	const char *sni;
-	const SSL_CIPHER *cipher;
-	const char *cipher_name;
-	X509 *my_cert;
-	int alg_bits;
-	STACK_OF(X509) * chain;
 
 	*error = SSL_ERROR_NONE;
 	tls_c = (struct tls_extra_data *)c->extra_data;
@@ -550,13 +618,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 
 	tls_openssl_clear_errors();
 	ret = SSL_accept(ssl);
-
-	tls_c->ssl_servername = NULL;
-	tls_c->ssl_cipher_name = NULL;
-	tls_c->ssl_my_cert = NULL;
-	tls_c->ssl_peer_cert = NULL;
-	tls_c->ssl_cert_chain = NULL;
-
+	tls_init_ssl_cache(tls_c);
 	if(unlikely(ret == 1)) {
 		DBG("TLS accept successful\n");
 		tls_c->state = S_TLS_ESTABLISHED;
@@ -568,8 +630,8 @@ int tls_accept(struct tcp_connection *c, int *error)
 		LOG(tls_log, "tls_accept: local socket: %s:%d\n",
 				ip_addr2a(&c->rcv.dst_ip), c->rcv.dst_port);
 
-		tls_c->ssl_verify_result = SSL_get_verify_result(ssl);
 		cert = SSL_get_peer_certificate(ssl);
+		tls_build_ssl_cache(tls_c, cert);
 		if(cert != 0) {
 			tls_dump_cert_info("tls_accept: client certificate", cert);
 			if(SSL_get_verify_result(ssl) != X509_V_OK) {
@@ -577,49 +639,9 @@ int tls_accept(struct tcp_connection *c, int *error)
 							 "verification failed!!!\n");
 				tls_dump_verification_failure(SSL_get_verify_result(ssl));
 			}
-			tls_c->ssl_peer_cert =
-					convert_X509_to_DER(cert, &tls_c->ssl_peer_cert_len);
 			X509_free(cert);
 		} else {
 			LOG(tls_log, "tls_accept: client did not present a certificate\n");
-		}
-		sni = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-		if(sni != NULL) {
-			tls_c->ssl_servername = shm_malloc(strlen(sni) + 1);
-			strcpy(tls_c->ssl_servername, sni);
-		}
-
-		strcpy(tls_c->ssl_cipher_desc, "unknown");
-		cipher = SSL_get_current_cipher(ssl);
-		if(cipher) {
-			SSL_CIPHER_description(cipher, tls_c->ssl_cipher_desc,
-					sizeof(tls_c->ssl_cipher_desc));
-			cipher_name = SSL_CIPHER_get_name(cipher);
-			if(cipher_name) {
-				tls_c->ssl_cipher_name = shm_malloc(strlen(cipher_name) + 1);
-				strcpy(tls_c->ssl_cipher_name, cipher_name);
-			}
-			tls_c->ssl_cipher_bits = SSL_CIPHER_get_bits(cipher, &alg_bits);
-		}
-
-
-		my_cert = SSL_get_certificate(ssl);
-		if(my_cert) {
-			tls_c->ssl_my_cert =
-					convert_X509_to_DER(my_cert, &tls_c->ssl_my_cert_len);
-			/* NOTE: SSL_get_certificate() returns a borrowed reference (no
-			 * refcount increment), unlike SSL_get_peer_certificate(). Do NOT
-			 * call X509_free() here - doing so decrements the refcount on the
-			 * SSL_CTX's certificate and causes a use-after-free on subsequent
-			 * connections that share the same context. */
-		}
-
-		strcpy(tls_c->ssl_version, SSL_get_version(ssl));
-
-		chain = SSL_get0_verified_chain(ssl);
-		if(chain) {
-			tls_c->ssl_cert_chain = (char *)stack_to_pkcs7_DER(
-					chain, &tls_c->ssl_cert_chain_len);
 		}
 	} else { /* ret == 0 or < 0 */
 		*error = SSL_get_error(ssl, ret);
@@ -664,6 +686,8 @@ int tls_connect(struct tcp_connection *c, int *error)
 
 	tls_openssl_clear_errors();
 	ret = SSL_connect(ssl);
+	tls_init_ssl_cache(tls_c);
+
 	if(unlikely(ret == 1)) {
 		DBG("TLS connect successful\n");
 		tls_c->state = S_TLS_ESTABLISHED;
@@ -675,6 +699,7 @@ int tls_connect(struct tcp_connection *c, int *error)
 		LOG(tls_log, "tls_connect: sending socket: %s:%d \n",
 				ip_addr2a(&c->rcv.dst_ip), c->rcv.dst_port);
 		cert = SSL_get_peer_certificate(ssl);
+		tls_build_ssl_cache(tls_c, cert);
 		if(cert != 0) {
 			tls_dump_cert_info("tls_connect: server certificate", cert);
 			if(SSL_get_verify_result(ssl) != X509_V_OK) {
