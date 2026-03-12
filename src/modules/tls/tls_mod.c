@@ -125,6 +125,7 @@ static stat_export_t mod_stats[] = {
 /* clang-format on */
 #endif
 
+extern int ksr_tcp_main_threads;
 extern str sr_tls_event_callback;
 str sr_tls_xavp_cfg = {0, 0};
 /*
@@ -549,7 +550,8 @@ static int mod_init(void)
 		ksr_module_set_flag(KSRMOD_FLAG_POSTCHILDINIT);
 	}
 #endif
-	if(ksr_tls_threads_mode == KSR_TLS_THREADS_MFORK) {
+	if(ksr_tls_threads_mode == KSR_TLS_THREADS_MFORK
+			&& ksr_tcp_main_threads == 0) {
 		pthread_atfork(NULL, NULL, &fork_child);
 	}
 
@@ -628,8 +630,19 @@ static int mod_child(int rank)
 	if(tls_disable || (tls_domains_cfg == 0))
 		return 0;
 
-	if(rank == PROC_INIT) {
+	if(rank == PROC_INIT && ksr_tcp_main_threads == 0) {
 		return mod_child_hook(&rank, NULL);
+	}
+	if(rank == PROC_INIT && ksr_tcp_main_threads > 0) {
+		LM_INFO("tcp_main_threads=%d: SSL_CTX init deferred to "
+				"PROC_TCP_MAIN, skipping PROC_INIT\n",
+				ksr_tcp_main_threads);
+		return 0;
+	}
+	if(rank == PROC_TCP_MAIN && ksr_tcp_main_threads > 0) {
+		if(mod_child_hook(&rank, NULL) < 0)
+			return -1;
+		/* fall through to HSM key loading below */
 	}
 
 #ifdef KSR_SSL_COMMON
@@ -642,7 +655,8 @@ static int mod_child(int rank)
 		return 0;
 #endif /* KSR_SSL_ENGINE */
 
-	if(rank > 0) {
+	if((rank > 0 && ksr_tcp_main_threads == 0)
+			|| (rank == PROC_TCP_MAIN && ksr_tcp_main_threads > 0)) {
 #ifdef KSR_SSL_PROVIDER
 		if(tls_provider_quirks & 1) {
 			new_ctx = OSSL_LIB_CTX_new();
@@ -657,7 +671,7 @@ static int mod_child(int rank)
 			return -1;
 		LM_INFO("OpenSSL loaded private keys in child: %d\n", rank);
 	}
-#endif /* KSR_SSL_PROVIDER */
+#endif /* KSR_SSL_COMMON */
 	return 0;
 }
 

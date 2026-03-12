@@ -41,12 +41,20 @@
 #include "tls_rpc.h"
 #include "tls_cfg.h"
 
+extern int ksr_tcp_main_threads;
 static const char *tls_reload_doc[2] = {"Reload TLS configuration file", 0};
 
 static void tls_reload(rpc_t *rpc, void *ctx)
 {
 	tls_domains_cfg_t *cfg;
 	str tls_domains_cfg_file;
+
+	if(ksr_tcp_main_threads > 0) {
+		rpc->fault(ctx, 500,
+				"TODO: TLS configuration reload is not supported when"
+				" tcp_main_threads is greater than 0");
+		return;
+	}
 
 	tls_domains_cfg_file = cfg_get(tls, tls_cfg, config_file);
 	if(!tls_domains_cfg_file.s) {
