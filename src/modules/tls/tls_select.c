@@ -1025,6 +1025,20 @@ static int get_comp(str *res, int local, int issuer, int nid, sip_msg_t *msg)
 		goto err;
 	}
 
+	if(nid == NID_undef) {
+		/* no component requested - return the full subject/issuer oneline */
+		if(X509_NAME_oneline(name, buf, sizeof(buf)) == NULL) {
+			ERR("Error converting X509 name to string\n");
+			goto err;
+		}
+		res->s = buf;
+		res->len = strlen(buf);
+		if(!local)
+			X509_free(cert);
+		tcpconn_put(c);
+		return 0;
+	}
+
 	index = X509_NAME_get_index_by_NID(name, nid, -1);
 	if(index == -1) {
 		switch(nid) {
