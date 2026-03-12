@@ -530,7 +530,8 @@ STACK_OF(X509) * pkcs7_DER_to_stack(const uint8_t *der_buf, int der_len)
 	/*                                                                     */
 	/* X509_dup() performs a full encode/decode round-trip, producing a   */
 	/* completely independent X509 object with its own heap allocations.  */
-	/* The result is independent of p7 — PKCS7_free(p7) below is safe.   */ /* ------------------------------------------------------------------ */
+	/* The result is independent of p7 — PKCS7_free(p7) below is safe.   */
+	/* ------------------------------------------------------------------ */
 	for(i = 0; i < num_certs; i++) {
 		X509 *src = sk_X509_value(certs, i);
 		X509 *copy = NULL;

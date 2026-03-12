@@ -271,6 +271,8 @@ static void tls_free_ssl_cache(struct tls_extra_data *data)
 		shm_free(data->ssl_my_cert);
 	if(data->ssl_peer_cert)
 		shm_free(data->ssl_peer_cert);
+	if(data->ssl_cert_chain)
+		shm_free(data->ssl_cert_chain);
 }
 
 /** finish the ssl init.
@@ -533,6 +535,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 	const char *cipher_name;
 	X509 *my_cert;
 	int alg_bits;
+	STACK_OF(X509) * chain;
 
 	*error = SSL_ERROR_NONE;
 	tls_c = (struct tls_extra_data *)c->extra_data;
@@ -550,6 +553,7 @@ int tls_accept(struct tcp_connection *c, int *error)
 	tls_c->ssl_cipher_name = NULL;
 	tls_c->ssl_my_cert = NULL;
 	tls_c->ssl_peer_cert = NULL;
+	tls_c->ssl_cert_chain = NULL;
 
 	if(unlikely(ret == 1)) {
 		DBG("TLS accept successful\n");
@@ -609,6 +613,12 @@ int tls_accept(struct tcp_connection *c, int *error)
 		}
 
 		strcpy(tls_c->ssl_version, SSL_get_version(ssl));
+
+		chain = SSL_get0_verified_chain(ssl);
+		if(chain) {
+			tls_c->ssl_cert_chain = (char *)stack_to_pkcs7_DER(
+					chain, &tls_c->ssl_cert_chain_len);
+		}
 	} else { /* ret == 0 or < 0 */
 		*error = SSL_get_error(ssl, ret);
 	}
