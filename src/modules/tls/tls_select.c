@@ -935,7 +935,7 @@ static int pv_ssl_cert(sip_msg_t *msg, pv_param_t *param, pv_value_t *res)
 static int get_verified_cert_chain(
 		STACK_OF(X509) * *chain, struct tcp_connection **c, struct sip_msg *msg)
 {
-	SSL *ssl;
+	struct tls_extra_data *extra;
 
 	*chain = 0;
 	*c = get_cur_connection(msg);
@@ -943,10 +943,11 @@ static int get_verified_cert_chain(
 		INFO("TLS connection not found\n");
 		return -1;
 	}
-	ssl = get_ssl(*c);
-	if(!ssl)
+	extra = get_extra(*c);
+	if(!extra)
 		goto err;
-	*chain = SSL_get0_verified_chain(ssl);
+	*chain = pkcs7_DER_to_stack(
+			(uint8_t *)extra->ssl_cert_chain, extra->ssl_cert_chain_len);
 	if(!*chain) {
 		ERR("Unable to retrieve peer TLS verified chain from SSL structure\n");
 		goto err;
@@ -1561,20 +1562,20 @@ static int get_tlsext_sn(str *res, sip_msg_t *msg)
 	static char buf[1024];
 	struct tcp_connection *c;
 	str server_name;
-	SSL *ssl;
+	struct tls_extra_data *extra;
 
 	c = get_cur_connection(msg);
 	if(!c) {
 		INFO("TLS connection not found in select_desc\n");
 		goto error;
 	}
-	ssl = get_ssl(c);
-	if(!ssl)
+	extra = get_extra(c);
+	if(!extra)
 		goto error;
 
 	buf[0] = '\0';
 
-	server_name.s = (char *)SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+	server_name.s = extra->ssl_servername;
 	if(server_name.s) {
 		server_name.len = strlen(server_name.s);
 		DBG("received server_name (TLS extension): '%.*s'\n",
@@ -1670,7 +1671,7 @@ error:
 
 int pv_get_tls(struct sip_msg *msg, pv_param_t *param, pv_value_t *res)
 {
-	SSL *ssl = NULL;
+	struct tls_extra_data *extra = NULL;
 	tcp_connection_t *c = NULL;
 	X509 *cert = NULL;
 	str sv = STR_NULL;
@@ -1684,12 +1685,15 @@ int pv_get_tls(struct sip_msg *msg, pv_param_t *param, pv_value_t *res)
 		LM_DBG("TLS connection not found\n");
 		return pv_get_null(msg, param, res);
 	}
-	ssl = get_ssl(c);
-	if(ssl == NULL) {
+	extra = get_extra(c);
+	if(extra == NULL) {
 		goto error;
 	}
-	cert = (param->pvn.u.isname.name.n < 5000) ? SSL_get_certificate(ssl)
-											   : SSL_get_peer_certificate(ssl);
+	cert = (param->pvn.u.isname.name.n < 5000)
+				   ? convert_DER_to_X509(
+							 extra->ssl_my_cert, extra->ssl_my_cert_len)
+				   : convert_DER_to_X509(
+							 extra->ssl_peer_cert, extra->ssl_peer_cert_len);
 	if(cert == NULL) {
 		if(param->pvn.u.isname.name.n < 5000) {
 			LM_ERR("failed to retrieve my TLS certificate from SSL "
