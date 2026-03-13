@@ -30,23 +30,13 @@
 #include <openssl/bn.h>
 #include <openssl/dh.h>
 
-/* only OpenSSL <= 1.1.1 */
-#if !defined(OPENSSL_NO_ENGINE) && OPENSSL_VERSION_NUMBER < 0x030000000L
-#define KSR_SSL_COMMON
-#define KSR_SSL_ENGINE
-#define KEY_PREFIX "/engine:"
-#define KEY_PREFIX_LEN (strlen(KEY_PREFIX))
+#include "tls_openssl.h"
+#ifdef KSR_SSL_ENGINE
 #include <openssl/engine.h>
+#endif /* KSR_SSL_ENGINE */
+#ifdef KSR_SSL_COMMON
 extern EVP_PKEY *tls_engine_private_key(const char *key_id);
-#endif
-
-#if !defined(OPENSSL_NO_PROVIDER) && OPENSSL_VERSION_NUMBER >= 0x030000000L
-#define KSR_SSL_COMMON
-#define KSR_SSL_PROVIDER
-#define KEY_PREFIX "/uri:"
-#define KEY_PREFIX_LEN (strlen(KEY_PREFIX))
-extern EVP_PKEY *tls_engine_private_key(const char *key_id);
-#endif
+#endif /* KSR_SSL_COMMON */
 
 #if OPENSSL_VERSION_NUMBER >= 0x00907000L
 #include <openssl/ui.h>

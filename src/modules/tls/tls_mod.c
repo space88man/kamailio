@@ -91,21 +91,7 @@ int ksr_rand_engine_param(modparam_t type, void *val);
 
 MODULE_VERSION
 
-/* Engine is deprecated in OpenSSL 3 */
-#if !defined(OPENSSL_NO_ENGINE) && OPENSSL_VERSION_NUMBER < 0x030000000L
-#define KSR_SSL_COMMON
-#define KSR_SSL_ENGINE
-#define KEY_PREFIX "/engine:"
-#define KEY_PREFIX_LEN (strlen(KEY_PREFIX))
-#endif
-
-#if !defined(OPENSSL_NO_PROVIDER) && OPENSSL_VERSION_NUMBER >= 0x030000000L
-#define KSR_SSL_COMMON
-#define KSR_SSL_PROVIDER
-#include <openssl/store.h>
-#define KEY_PREFIX "/uri:"
-#define KEY_PREFIX_LEN (strlen(KEY_PREFIX))
-#endif
+#include "tls_openssl.h"
 
 #ifdef STATISTICS
 unsigned long tls_stats_connections_no(void);
@@ -591,6 +577,42 @@ error:
 #ifdef KSR_SSL_COMMON
 static int tls_engine_init();
 int tls_fix_engine_keys(tls_domains_cfg_t *, tls_domain_t *, tls_domain_t *);
+
+/**
+ * tls_reload_engine_keys - reload HSM/engine private keys after tls.reload
+ *
+ * Called from tls_reload_do() after a new tls_domains_cfg has been installed.
+ * tls_fix_domains_cfg only handles soft keys — this reloads HSM/engine keys
+ * into the new SSL_CTX. Fixes a pre-existing bug where tls.reload silently
+ * left the new ctx with no private key, breaking all subsequent TLS handshakes.
+ *
+ * Safe to call in:
+ *   tcp_main_threads == 0: any rank (ctx lives in shm, engine per-process)
+ *   tcp_main_threads  > 0: PROC_TCP_MAIN only (sole owner of SSL_CTX)
+ *
+ * @return 0 on success, -1 on failure
+ */
+int tls_reload_engine_keys(void)
+{
+#ifdef KSR_SSL_ENGINE
+	if(!strncmp(tls_engine_settings.engine.s, "NONE", 4))
+		return 0;
+#endif /* KSR_SSL_ENGINE */
+
+#ifdef KSR_SSL_PROVIDER
+	if(tls_provider_quirks & 1) {
+		OSSL_LIB_CTX *new_ctx = OSSL_LIB_CTX_new();
+		OSSL_LIB_CTX_set0_default(new_ctx);
+		CONF_modules_load_file(CONF_get1_default_config_file(), NULL, 0L);
+	}
+#endif /* KSR_SSL_PROVIDER */
+	if(tls_engine_init() < 0)
+		return -1;
+	if(tls_fix_engine_keys(*tls_domains_cfg, &srv_defaults, &cli_defaults) < 0)
+		return -1;
+	LM_INFO("HSM/engine keys reloaded\n");
+	return 0;
+}
 #endif /* KSR_SSL_COMMON */
 
 /*
