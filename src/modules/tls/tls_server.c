@@ -836,19 +836,13 @@ int tls_h_tcpconn_init_f(struct tcp_connection *c, int sock)
 }
 
 
-/** clean the extra data upon connection shut down.
+/** clean the extra data upon connection shut down - direct version.
+ * Must only be called from tcp_main process (or supervisor/main in MP mode).
  */
-void tls_h_tcpconn_clean_f(struct tcp_connection *c)
+static void tls_h_tcpconn_clean_direct(struct tcp_connection *c)
 {
 	struct tls_extra_data *extra;
 
-	/*
-	 * runs within global tcp lock
-	 */
-	if(!is_tcp_main() && !_ksr_is_main) {
-		LM_WARN("not in superviser or tcp main process [%s]\n",
-				pt[process_no].desc);
-	}
 	if((c->type != PROTO_TLS) && (c->type != PROTO_WSS)) {
 		BUG("Bad connection structure\n");
 		abort();
@@ -878,6 +872,97 @@ void tls_h_tcpconn_clean_f(struct tcp_connection *c)
 		c->cinfo.server_id.s = NULL;
 		c->cinfo.server_id.len = 0;
 	}
+}
+
+
+/**
+ * Parameters for MT dispatch of tls_h_tcpconn_clean_f.
+ */
+typedef struct tls_clean_params
+{
+	struct tcp_connection *c;
+	int pidx;
+} tls_clean_params_t;
+
+
+/**
+ * Thread callback: runs in tcp_main thread, safe to call SSL_free.
+ */
+static void tls_h_tcpconn_clean_mt_thread_cb(void *p, int pidx)
+{
+	tls_clean_params_t *cparams = NULL;
+	tcpx_task_result_t *rtask = NULL;
+
+	cparams = (tls_clean_params_t *)p;
+
+	rtask = (tcpx_task_result_t *)shm_mallocxz(sizeof(tcpx_task_result_t));
+	if(rtask == NULL) {
+		SHM_MEM_ERROR;
+		ksr_tcpx_thread_eresult(NULL, pidx);
+		return;
+	}
+	tls_h_tcpconn_clean_direct(cparams->c);
+	rtask->code = 0;
+	rtask->data = cparams;
+	ksr_tcpx_thread_eresult(rtask, pidx);
+	return;
+}
+
+
+/** clean the extra data upon connection shut down.
+ * In MT mode dispatches work to PROC_TCP_MAIN to ensure SSL_free is always
+ * called from the correct thread.  In MP mode runs directly (original path).
+ */
+void tls_h_tcpconn_clean_f(struct tcp_connection *c)
+{
+	/* At shutdown in MT mode, PROC_TCP_MAIN is already dead and the OS
+	 * reclaims all memory. Avoid touching its heap entirely. */
+	if(_ksr_is_main && ksr_tcp_main_threads != 0)
+		return;
+
+	if(ksr_tcp_main_threads != 0 && !is_tcp_main() && !_ksr_is_main) {
+		int dsize = 0;
+		tcpx_task_t *ptask = NULL;
+		tcpx_task_result_t *rtask = NULL;
+		tls_clean_params_t *cparams = NULL;
+
+		LM_DBG("dispatching tls clean to tcp main thread for conn %p\n", c);
+
+		dsize = sizeof(tcpx_task_t) + sizeof(tls_clean_params_t);
+		ptask = (tcpx_task_t *)shm_mallocxz(dsize);
+		if(ptask == NULL) {
+			SHM_MEM_ERROR;
+			LM_ERR("falling back to direct tls clean for conn %p\n", c);
+			goto direct_clean;
+		}
+		ptask->exec = tls_h_tcpconn_clean_mt_thread_cb;
+		ptask->param = (void *)((char *)ptask + sizeof(tcpx_task_t));
+		cparams = (tls_clean_params_t *)((char *)ptask + sizeof(tcpx_task_t));
+		cparams->c = c;
+		cparams->pidx = process_no;
+
+		if(ksr_tcpx_task_send(ptask, process_no) < 0) {
+			LM_ERR("failed to send tls clean task, falling back direct\n");
+			shm_free(ptask);
+			goto direct_clean;
+		}
+
+		ksr_tcpx_task_result_recv(&rtask, process_no);
+		if(rtask == NULL) {
+			LM_ERR("failed to receive tls clean result for conn %p\n", c);
+		} else {
+			shm_free(rtask);
+		}
+		shm_free(ptask);
+		return;
+	}
+
+direct_clean:
+	if(!is_tcp_main() && !_ksr_is_main) {
+		LM_WARN("not in supervisor or tcp main process [%s]\n",
+				pt[process_no].desc);
+	}
+	tls_h_tcpconn_clean_direct(c);
 }
 
 
