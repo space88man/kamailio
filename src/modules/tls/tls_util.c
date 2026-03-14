@@ -42,6 +42,22 @@
 #include "tls_mod.h"
 #include "tls_util.h"
 
+/* OpenSSL < 3.0 compatibility shims */
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+/* ERR_raise() was introduced in OpenSSL 3.0.
+ * ERR_put_error() is the 1.x equivalent; func (middle arg) is unused in 3.x
+ * so passing 0 is fine for both error-reporting and backward compat. */
+#ifndef ERR_raise
+#define ERR_raise(lib, reason) \
+	ERR_put_error((lib), 0, (reason), __FILE__, __LINE__)
+#endif
+/* ERR_R_PASSED_INVALID_ARGUMENT was added in OpenSSL 3.0.
+ * Map to the closest 1.x generic reason code. */
+#ifndef ERR_R_PASSED_INVALID_ARGUMENT
+#define ERR_R_PASSED_INVALID_ARGUMENT ERR_R_PASSED_NULL_PARAMETER
+#endif
+#endif /* OPENSSL_VERSION_NUMBER < 0x30000000L */
+
 
 extern int *ksr_tls_keylog_mode;
 extern str ksr_tls_keylog_file;
