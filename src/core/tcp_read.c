@@ -49,6 +49,7 @@
 #include "tcp_ev.h"
 #include "pass_fd.h"
 #include "globals.h"
+#include "tcp_reactor.h"
 #include "receive.h"
 #include "timer.h"
 #include "local_timer.h"
@@ -1801,6 +1802,16 @@ again:
 							   because we always alloc BUF_SIZE+1 */
 		*req->parsed = 0;
 
+		if(unlikely(ksr_tcp_main_threads == 2
+					&& (con->type == PROTO_WS || con->type == PROTO_WSS
+							|| (req->flags & F_TCP_REQ_HEP3)))) {
+			LM_ERR("protocol not supported with tcp_main_threads=2"
+				   " (WS/WSS/HEP3): dropping connection\n");
+			*req->parsed = c;
+			resp = CONN_ERROR;
+			goto end_req;
+		}
+
 		if(req->state == H_PING_CRLF) {
 			init_dst_from_rcv(&dst, &con->rcv);
 
@@ -1822,17 +1833,27 @@ again:
 			// if (unlikely(req->flags&F_TCP_REQ_MSRP_FRAME)){
 			if(unlikely(req->state == H_MSRP_FINISH)) {
 				/* msrp frame */
-				ret = receive_tcp_msg(
-						req->start, req->parsed - req->start, &con->rcv, con);
+				if(ksr_tcp_main_threads == 2) {
+					LM_ERR("MSRP not supported with tcp_main_threads=2:"
+						   " dropping connection\n");
+					ret = -1;
+				} else
+					ret = receive_tcp_msg(req->start, req->parsed - req->start,
+							&con->rcv, con);
 			} else
 #endif
 #ifdef READ_HTTP11
 					if(unlikely(req->state == H_HTTP11_CHUNK_FINISH)) {
 				/* http chunked request */
 				req->body[req->content_len] = 0;
-				ret = receive_tcp_msg(req->start,
-						req->body + req->content_len - req->start, &con->rcv,
-						con);
+				if(ksr_tcp_main_threads == 2)
+					ret = tcp_reactor_dispatch_msg(req->start,
+							req->body + req->content_len - req->start,
+							&con->rcv);
+				else
+					ret = receive_tcp_msg(req->start,
+							req->body + req->content_len - req->start,
+							&con->rcv, con);
 			} else
 #endif
 #ifdef READ_WS
@@ -1842,6 +1863,10 @@ again:
 						req->start, req->parsed - req->start, &con->rcv, con);
 			} else
 #endif
+					if(ksr_tcp_main_threads == 2)
+				ret = tcp_reactor_dispatch_msg(
+						req->start, req->parsed - req->start, &con->rcv);
+			else
 				ret = receive_tcp_msg(
 						req->start, req->parsed - req->start, &con->rcv, con);
 
