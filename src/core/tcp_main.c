@@ -197,6 +197,16 @@ static int *connection_id = 0; /*  unique for each connection, used for
 								for a reply */
 int unix_tcp_sock;
 
+/* mode 2 reactor: shared AF_UNIX SOCK_DGRAM socketpair.
+ * [0] = read end (all workers recvfrom this fd after fork)
+ * [1] = write end (tcp_main sends task pointers here) */
+static int ksr_tcp_reactor_dsock[2] = {-1, -1};
+
+int ksr_tcp_reactor_get_dispatch_rfd(void)
+{
+	return ksr_tcp_reactor_dsock[0];
+}
+
 static int tcp_proto_no = -1; /* tcp protocol number as returned by
 							   getprotobyname */
 
@@ -517,7 +527,7 @@ again:
 	} else
 		goto end;
 
-		/* poll/select loop */
+	/* poll/select loop */
 #if defined(HAVE_SELECT) && defined(BLOCKING_USE_SELECT)
 	FD_ZERO(&orig_set);
 	FD_SET(fd, &orig_set);
@@ -2105,7 +2115,7 @@ inline static int _tcpconn_add_alias_unsafe(struct tcp_connection *c, int port,
 						for(r = i; r < p->aliases; r++) {
 							tcpconn_listrm(
 									tcpconn_aliases_hash[p->con_aliases[r]
-																 .hash],
+													.hash],
 									&p->con_aliases[r], next, prev);
 						}
 						if(likely((i + 1) < p->aliases)) {
@@ -2118,7 +2128,7 @@ inline static int _tcpconn_add_alias_unsafe(struct tcp_connection *c, int port,
 						for(r = i; r < p->aliases; r++) {
 							tcpconn_listadd(
 									tcpconn_aliases_hash[p->con_aliases[r]
-																 .hash],
+													.hash],
 									&p->con_aliases[r], next, prev);
 						}
 					} else
@@ -5235,6 +5245,10 @@ void tcp_main_loop()
 			goto error;
 		}
 		LM_INFO("tcp main processing threads prepared\n");
+		/* mode 2: the reactor dispatch socketpair is created in the main
+		 * process by tcp_init_children() before any TCP child is forked, so it
+		 * is inherited here (and by every worker). Nothing to do at this point;
+		 * tcp_main uses ksr_tcp_reactor_get_dispatch_wfd() to ship tasks. */
 	} else {
 		LM_INFO("tcp main processing threads not enabled\n");
 	}
@@ -5553,6 +5567,41 @@ int tcp_fix_child_sockets(int *fd)
 }
 
 
+/* mode 2: create the reactor dispatch socketpair (AF_UNIX SOCK_DGRAM).
+ * MUST be called in the main process before any TCP child (workers AND
+ * PROC_TCP_MAIN) is forked, so all of them inherit the shared fds: workers
+ * recvfrom dsock[0] (the kernel load-balances across them) and PROC_TCP_MAIN
+ * sends reassembled SIP tasks on dsock[1]. Both ends are non-blocking.
+ * Returns 0 on success (or when not in mode 2), -1 on error. */
+static int ksr_tcp_reactor_dsock_init(void)
+{
+	if(ksr_tcp_main_threads != 2)
+		return 0;
+	if(socketpair(AF_UNIX, SOCK_DGRAM, 0, ksr_tcp_reactor_dsock) < 0) {
+		LM_ERR("failed to create reactor dispatch socketpair: %s\n",
+				strerror(errno));
+		return -1;
+	}
+	if(fcntl(ksr_tcp_reactor_dsock[0], F_SETFL,
+			   fcntl(ksr_tcp_reactor_dsock[0], F_GETFL) | O_NONBLOCK)
+			< 0) {
+		LM_ERR("failed to set O_NONBLOCK on reactor dsock[0]: %s\n",
+				strerror(errno));
+		return -1;
+	}
+	if(fcntl(ksr_tcp_reactor_dsock[1], F_SETFL,
+			   fcntl(ksr_tcp_reactor_dsock[1], F_GETFL) | O_NONBLOCK)
+			< 0) {
+		LM_ERR("failed to set O_NONBLOCK on reactor dsock[1]: %s\n",
+				strerror(errno));
+		return -1;
+	}
+	LM_INFO("tcp reactor dispatch socketpair created (rfd=%d wfd=%d)\n",
+			ksr_tcp_reactor_dsock[0], ksr_tcp_reactor_dsock[1]);
+	return 0;
+}
+
+
 /* starts the tcp processes */
 int tcp_init_children(int *woneinit)
 {
@@ -5617,6 +5666,12 @@ int tcp_init_children(int *woneinit)
 
 	/* create the tcp sock_info structures */
 	/* copy the sockets --moved to main_loop*/
+
+	/* mode 2: create the reactor dispatch socketpair before forking, so the
+	 * workers (below) and PROC_TCP_MAIN (forked by the caller right after) all
+	 * inherit the shared fds */
+	if(ksr_tcp_reactor_dsock_init() < 0)
+		goto error;
 
 	/* fork children & create the socket pairs*/
 	for(r = 0; r < tcp_children_no; r++) {
