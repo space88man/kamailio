@@ -2286,6 +2286,7 @@ inline static void tcp_fd_cache_add(struct tcp_connection *c, int fd)
 
 
 inline static int tcpconn_chld_put(struct tcp_connection *tcpconn);
+inline static void tcpconn_destroy(struct tcp_connection *tcpconn);
 
 static int tcpconn_send_put(struct tcp_connection *c, const char *buf,
 		unsigned len, snd_flags_t send_flags);
@@ -2294,6 +2295,17 @@ static int tcpconn_do_send(int fd, struct tcp_connection *c, const char *buf,
 
 static int tcpconn_1st_send(int fd, struct tcp_connection *c, const char *buf,
 		unsigned len, snd_flags_t send_flags, long *resp, int locked);
+
+#ifdef TCP_ASYNC
+/* mode 2: enable POLLOUT watching on a hashed connection without freeing it on
+ * io_watch failure (defined later, used from tcpconn_send_unsafe()). */
+static int tcp_reactor_enable_write_watch(struct tcp_connection *c);
+/* mode 2 write helpers (defined later, used from tcp_reactor_send_put() when it
+ * runs inside PROC_TCP_MAIN itself - e.g. a core read-path CRLF pong). */
+static int tcp_reactor_wbuf_enqueue(struct tcp_connection *c, char *buf,
+		unsigned len, snd_flags_t send_flags);
+static int tcp_reactor_watch_write(struct tcp_connection *c);
+#endif /* TCP_ASYNC */
 
 #define tcp_dst_ephemeral_set(n, c, dst)           \
 	do {                                           \
@@ -2317,6 +2329,29 @@ static int tcp_reactor_send_put(struct tcp_connection *c, const char *buf,
 {
 	tcp_reactor_write_req_t *wreq;
 	long response[2];
+
+	if(unlikely(is_tcp_main())) {
+		/* called from within PROC_TCP_MAIN's own read path (e.g. a core CRLF
+		 * keepalive pong or an HTTP/1.1 100-continue, both sent via tcp_send()
+		 * from tcp_read_req()). We are already in the io_wait thread, so there
+		 * is no unix_tcp_sock self-send - queue the payload and arm POLLOUT
+		 * directly, mirroring the CONN_WRITE_REQ handler. Release the refcnt the
+		 * caller (tcp_send) took on c. */
+		if(unlikely(tcpconn_put(c))) {
+			tcpconn_destroy(c); /* was the last ref */
+			return -1;
+		}
+		if(unlikely((c->state == S_CONN_BAD) || !(c->flags & F_CONN_HASHED))) {
+			/* in the process of being destroyed => drop the write */
+			return -1;
+		}
+		if(unlikely(tcp_reactor_wbuf_enqueue(c, (char *)buf, len, send_flags)
+					< 0)) {
+			return -1;
+		}
+		tcp_reactor_watch_write(c);
+		return (int)len;
+	}
 
 	wreq = shm_malloc(sizeof(tcp_reactor_write_req_t));
 	if(unlikely(wreq == NULL)) {
@@ -2357,6 +2392,20 @@ static int tcp_reactor_connect_put(struct dest_info *dst,
 {
 	tcp_reactor_connect_req_t *creq;
 	long response[2];
+
+	if(unlikely(is_tcp_main())) {
+		/* A new outbound connection requested by code running inside
+		 * PROC_TCP_MAIN itself. The unix_tcp_sock self-send below is invalid
+		 * here. The known in-tcp_main senders (core read-path CRLF pong /
+		 * HTTP 100-continue) always target an already-established connection
+		 * (handled by tcp_reactor_send_put), so this path is not expected to be
+		 * reached; fail loudly rather than emit a confusing "send on 0" error.
+		 * (Full inline connect-from-tcp_main is left for the Phase 2 reactor.) */
+		LM_ERR("outbound connect requested from within PROC_TCP_MAIN to %s -"
+			   " not supported in mode 2, dropping\n",
+				su2a(&dst->to, sizeof(dst->to)));
+		return -1;
+	}
 
 	creq = shm_malloc(sizeof(tcp_reactor_connect_req_t));
 	if(unlikely(creq == NULL)) {
@@ -3147,6 +3196,38 @@ int tcpconn_send_unsafe(int fd, struct tcp_connection *c, const char *buf,
 {
 	int n;
 	long response[2];
+
+#ifdef TCP_ASYNC
+	if(unlikely(ksr_tcp_main_threads == 2 && is_tcp_main())) {
+		/* full reactor mode: we are already inside PROC_TCP_MAIN's event loop,
+		 * so there is no fd-passing / unix_sock self-send. This is reached from
+		 * the TLS read path (tls_h_read_*), which drives the handshake and may
+		 * need to push out ciphertext (handshake records, write-wants-read
+		 * flush, renegotiation). Handle the write result against our own
+		 * reactor instead of shipping a CONN_* command to ourselves.
+		 * The caller holds c->write_lock (locked=1) and keeps using c after we
+		 * return, so on failure we mark the connection for the reaper rather
+		 * than freeing it here. */
+		n = tcpconn_do_send(fd, c, buf, len, send_flags, &response[1], 1);
+		switch(response[1]) {
+			case CONN_NOP:
+				break;
+			case CONN_QUEUED_WRITE:
+				if(unlikely(tcp_reactor_enable_write_watch(c) < 0)) {
+					c->state = S_CONN_BAD;
+					c->timeout = get_ticks_raw(); /* force timeout reaper */
+				}
+				break;
+			default: /* CONN_ERROR / CONN_EOF: defer close to the reaper */
+				c->state = S_CONN_BAD;
+				c->timeout = get_ticks_raw();
+				if(response[1] == CONN_ERROR)
+					n = -1;
+				break;
+		}
+		return n;
+	}
+#endif /* TCP_ASYNC */
 
 	n = tcpconn_do_send(fd, c, buf, len, send_flags, &response[1], 1);
 	if(unlikely(response[1] != CONN_NOP)) {
@@ -4373,10 +4454,11 @@ static int tcp_reactor_wbuf_enqueue(struct tcp_connection *c, char *buf,
 	return 0;
 }
 
-/* mode 2: enable POLLOUT watching on an already-hashed, read-watched connection
- * (mirrors the CONN_QUEUED_WRITE logic). Returns 0 on success, -1 on error
- * (connection is unhashed and destroyed on io_watch failure). */
-static int tcp_reactor_watch_write(struct tcp_connection *c)
+/* mode 2: enable POLLOUT watching on an already-hashed connection (mirrors the
+ * CONN_QUEUED_WRITE logic). Non-destructive: on io_watch failure it clears the
+ * write-watch flag and returns -1 WITHOUT freeing c, so callers that keep using
+ * c afterwards (e.g. the TLS read path) stay safe. Returns 0 on success. */
+static int tcp_reactor_enable_write_watch(struct tcp_connection *c)
 {
 	ticks_t t;
 
@@ -4397,25 +4479,36 @@ static int tcp_reactor_watch_write(struct tcp_connection *c)
 		if(!(c->flags & F_CONN_READ_W)) {
 			if(unlikely(io_watch_add(&io_h, c->s, POLLOUT, F_TCPCONN, c) < 0)) {
 				LM_CRIT("failed to enable write watch (reactor)\n");
-				if(tcpconn_try_unhash(c))
-					tcpconn_put_destroy(c);
+				c->flags &= ~F_CONN_WRITE_W;
 				return -1;
 			}
 		} else {
 			if(unlikely(io_watch_chg(&io_h, c->s, POLLIN | POLLOUT, -1) < 0)) {
 				LM_CRIT("failed to change socket watch events (reactor)\n");
-				if(tcpconn_try_unhash(c)) {
-					io_watch_del(&io_h, c->s, -1, IO_FD_CLOSING);
-					c->flags &= ~F_CONN_READ_W;
-					tcpconn_put_destroy(c);
-				} else {
-					BUG("unhashed connection watched for IO\n");
-					io_watch_del(&io_h, c->s, -1, 0);
-					c->flags &= ~F_CONN_READ_W;
-				}
+				c->flags &= ~F_CONN_WRITE_W;
 				return -1;
 			}
 		}
+	}
+	return 0;
+}
+
+/* mode 2: enable POLLOUT watching, destroying the connection on io_watch
+ * failure. Used by the IPC write/connect handlers, which do not touch c after
+ * this returns. Returns 0 on success, -1 on error (c unhashed and destroyed). */
+static int tcp_reactor_watch_write(struct tcp_connection *c)
+{
+	if(unlikely(tcp_reactor_enable_write_watch(c) < 0)) {
+		if(likely(tcpconn_try_unhash(c))) {
+			if((c->flags & F_CONN_READ_W) && (c->s != -1)) {
+				io_watch_del(&io_h, c->s, -1, IO_FD_CLOSING);
+				c->flags &= ~F_CONN_READ_W;
+			}
+			tcpconn_put_destroy(c);
+		} else {
+			BUG("unhashed connection watched for IO\n");
+		}
+		return -1;
 	}
 	return 0;
 }
