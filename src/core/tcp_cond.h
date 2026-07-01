@@ -34,10 +34,13 @@
  * Because waiters and signalers are different PIDs sharing one shm page, both
  * the mutex and the condvar are PTHREAD_PROCESS_SHARED.
  *
- * The mutex is additionally PTHREAD_MUTEX_ROBUST: if a process dies while
- * holding the lock, the next tcp_cond_lock()/tcp_cond_wait() recovers it
- * (EOWNERDEAD -> pthread_mutex_consistent) instead of leaving every future
- * locker stuck at ENOTRECOVERABLE.
+ * Where the platform supports it (HAVE_PTHREAD_MUTEX_ROBUST, probed by the
+ * build - see cmake/lock_methods.cmake), the mutex is additionally
+ * PTHREAD_MUTEX_ROBUST: if a process dies while holding the lock, the next
+ * tcp_cond_lock()/tcp_cond_wait() recovers it (EOWNERDEAD ->
+ * pthread_mutex_consistent) instead of leaving every future locker stuck at
+ * ENOTRECOVERABLE. On platforms without robust mutexes (e.g. macOS) the mutex is
+ * process-shared but not robust.
  */
 typedef struct tcp_cond
 {
