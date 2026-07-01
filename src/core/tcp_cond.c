@@ -21,7 +21,12 @@
  */
 
 /* pthread_mutexattr_setrobust()/pthread_mutex_consistent() need _GNU_SOURCE
- * (or _POSIX_C_SOURCE >= 200809) on glibc; must be set before any include. */
+ * (or _POSIX_C_SOURCE >= 200809) on glibc; must be set before any include.
+ * Robust mutexes are a POSIX option not available on every platform (notably
+ * macOS). The build probes for them and defines HAVE_PTHREAD_MUTEX_ROBUST (see
+ * cmake/lock_methods.cmake). Without it the mutex is still process-shared but
+ * not robust: a process dying while holding the lock is not recovered - which is
+ * acceptable for the current in-process reactor use. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -44,9 +49,11 @@ int tcp_cond_init(tcp_cond_t *cond)
 		return -1;
 	}
 	if(pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED) != 0
+#ifdef HAVE_PTHREAD_MUTEX_ROBUST
 			|| pthread_mutexattr_setrobust(&mattr, PTHREAD_MUTEX_ROBUST) != 0
+#endif
 			|| pthread_mutex_init(&cond->m, &mattr) != 0) {
-		LM_ERR("failed to set up process-shared robust mutex\n");
+		LM_ERR("failed to set up process-shared mutex\n");
 		pthread_mutexattr_destroy(&mattr);
 		return -1;
 	}
@@ -76,6 +83,7 @@ void tcp_cond_destroy(tcp_cond_t *cond)
 	pthread_mutex_destroy(&cond->m);
 }
 
+#ifdef HAVE_PTHREAD_MUTEX_ROBUST
 /* Recover a robust mutex whose previous owner died while holding it: we now own
  * the lock, but the data it protects may be inconsistent. Marking it consistent
  * keeps the mutex usable; without this it would become ENOTRECOVERABLE and every
@@ -87,15 +95,20 @@ static void tcp_cond_recover_owner_dead(tcp_cond_t *cond)
 	if(pthread_mutex_consistent(&cond->m) != 0)
 		LM_ERR("failed to make robust mutex %p consistent\n", (void *)cond);
 }
+#endif /* HAVE_PTHREAD_MUTEX_ROBUST */
 
 void tcp_cond_lock(tcp_cond_t *cond)
 {
 	int ret;
 
 	ret = pthread_mutex_lock(&cond->m);
+#ifdef HAVE_PTHREAD_MUTEX_ROBUST
 	if(ret == EOWNERDEAD) {
 		tcp_cond_recover_owner_dead(cond);
-	} else if(ret != 0) {
+		return;
+	}
+#endif /* HAVE_PTHREAD_MUTEX_ROBUST */
+	if(ret != 0) {
 		LM_ERR("pthread_mutex_lock failed: %s (%d)\n", strerror(ret), ret);
 	}
 }
@@ -116,9 +129,13 @@ void tcp_cond_wait(tcp_cond_t *cond)
 	/* re-acquires the mutex on wakeup; that re-acquire can also report a dead
 	 * previous owner on a robust mutex */
 	ret = pthread_cond_wait(&cond->c, &cond->m);
+#ifdef HAVE_PTHREAD_MUTEX_ROBUST
 	if(ret == EOWNERDEAD) {
 		tcp_cond_recover_owner_dead(cond);
-	} else if(ret != 0) {
+		return;
+	}
+#endif /* HAVE_PTHREAD_MUTEX_ROBUST */
+	if(ret != 0) {
 		LM_ERR("pthread_cond_wait failed: %s (%d)\n", strerror(ret), ret);
 	}
 }
