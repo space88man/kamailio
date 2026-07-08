@@ -1810,15 +1810,6 @@ again:
 							   because we always alloc BUF_SIZE+1 */
 		*req->parsed = 0;
 
-		if(unlikely(ksr_tcp_main_threads == 2
-					&& (con->type == PROTO_WS || con->type == PROTO_WSS))) {
-			LM_ERR("protocol not supported with tcp_main_threads=2"
-				   " (WS/WSS): dropping connection\n");
-			*req->parsed = c;
-			resp = CONN_ERROR;
-			goto end_req;
-		}
-
 		if(req->state == H_PING_CRLF) {
 			init_dst_from_rcv(&dst, &con->rcv);
 

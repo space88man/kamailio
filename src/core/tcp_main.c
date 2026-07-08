@@ -5626,10 +5626,15 @@ inline static int handle_tcpconn_ev(
 			 * The shield gives that thread exclusive ownership of the conn
 			 * (F_CONN_POOL_BUSY), so it may drive OpenSSL on it: the SSL object is
 			 * touched by a single thread at a time and the encode trampoline uses
-			 * a per-thread scratch buffer (see tcp_mtops.c). WS / WSS stay inline
-			 * for now - their websocket framing layer is not yet offloaded. */
-			if(likely(tcpconn->type == PROTO_TCP
-					   || tcpconn->type == PROTO_TLS)) {
+			 * a per-thread scratch buffer (see tcp_mtops.c). Step 17: WS / WSS are
+			 * offloaded the same way - the WS frame codec runs on the pool thread
+			 * under the same shield (single-owner, like the SSL object); for WSS it
+			 * stacks above the TLS transform terminated on that same thread. During
+			 * the pre-upgrade handshake the conn is still PROTO_TCP/PROTO_TLS, so
+			 * this already covered it; after the con->type flip it stays covered. */
+			if(likely(tcpconn->type == PROTO_TCP || tcpconn->type == PROTO_TLS
+					   || tcpconn->type == PROTO_WS
+					   || tcpconn->type == PROTO_WSS)) {
 				/* shield the conn from the (level-triggered) reactor + timer so
 				 * a pool thread can own it exclusively, then enqueue the read */
 				if(ev
@@ -6007,9 +6012,10 @@ static void *tcp_reactor_thread_routine(void *arg)
 				pkg_free(job); /* RUN frees in-thread, no completion needed */
 				continue;
 			case TCP_R_READ: {
-				/* read + reassemble on conn->s (PROTO_TCP only at this step).
-				 * tcp_read_req() reads via _tconfd(conn)==conn->s and dispatches
-				 * complete SIP messages to workers via tcp_reactor_dispatch_msg().
+				/* read + reassemble on conn->s (PROTO_TCP/TLS, and PROTO_WS/WSS
+				 * since Step 17). tcp_read_req() reads via _tconfd(conn)==conn->s;
+				 * for WS the frame codec runs here under the shield and dispatches
+				 * the defragmented payload to workers via tcp_reactor_dispatch_msg().
 				 * No io_watch / no free here - the io_wait thread completes. */
 				rd_conn_flags_t read_flags;
 				int n, resp;

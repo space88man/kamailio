@@ -27,11 +27,13 @@
  */
 
 #include <strings.h>
+#include <pthread.h>
 
 #include "../../core/locking.h"
 #include "../../core/str.h"
 #include "../../core/ut.h"
 #include "../../core/tcp_conn.h"
+#include "../../core/globals.h"
 #include "../../core/fmsg.h"
 #include "../../core/counters.h"
 #include "../../core/kemi.h"
@@ -508,6 +510,17 @@ static void wsconn_run_close_callback(ws_connection_t *wsc)
 	sr_event_exec(SREV_TCP_WS_CLOSE, &evp);
 }
 
+/* Serializes wsconn_run_route(). In the full tcp reactor (tcp_main_threads == 2)
+ * WS frames are decoded on PROC_TCP_MAIN pool threads, so a remote close can run
+ * the websocket:closed event route on any pool thread (via wsconn_dtor when the
+ * read path releases the last ref). That script touches process-global state -
+ * the faked sip_msg (core/fmsg.c), the current route type - which is not
+ * thread-safe. PROC_TCP_MAIN runs no other config script, so a single
+ * process-local lock makes all such execution single-threaded again. Uncontended
+ * and harmless in modes 0/1 (workers/timer are separate processes). Mirrors
+ * tls_run_event_routes()'s _ksr_tls_evrt_lock. */
+static pthread_mutex_t _ksr_ws_evrt_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void wsconn_run_route(ws_connection_t *wsc)
 {
 	int rt, backup_rt;
@@ -533,8 +546,10 @@ static void wsconn_run_route(ws_connection_t *wsc)
 		}
 	}
 
+	pthread_mutex_lock(&_ksr_ws_evrt_lock);
 	if(faked_msg_init() < 0) {
 		LM_ERR("faked_msg_init() failed\n");
+		pthread_mutex_unlock(&_ksr_ws_evrt_lock);
 		return;
 	}
 
@@ -558,6 +573,7 @@ static void wsconn_run_route(ws_connection_t *wsc)
 		run_top_route(event_rt.rlist[rt], fmsg, 0);
 	}
 	set_route_type(backup_rt);
+	pthread_mutex_unlock(&_ksr_ws_evrt_lock);
 }
 
 static void wsconn_dtor(ws_connection_t *wsc)
