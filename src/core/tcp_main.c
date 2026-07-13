@@ -180,6 +180,7 @@ int tcp_max_connections = DEFAULT_TCP_MAX_CONNECTIONS;
 int tls_max_connections = DEFAULT_TLS_MAX_CONNECTIONS;
 int tcp_accept_unique = 0;
 int ksr_tcp_main_threads = 0;
+int ksr_tcp_reactor_threads = 8;
 int ksr_tcp_listen_backlog = TCP_LISTEN_BACKLOG;
 int tcp_connection_match = TCPCONN_MATCH_DEFAULT;
 
@@ -5961,8 +5962,6 @@ error:
  *                      final writes.
  **/
 
-/* hardcoded for now */
-static int tcp_reactor_threads = 8;
 /* tcp_reactor_thread_idx is defined near the top (needed earlier by
  * tcp_reactor_send_put's pool-thread detection). */
 
@@ -6146,24 +6145,8 @@ static void *tcp_reactor_thread_routine(void *arg)
 static int tcp_reactor_pool_init(void)
 {
 	int i;
-	char *env;
 
-	/* HACK/debug: override the pool thread count via env var so the reactor
-	 * pkg-concurrency hypothesis can be bisected without a rebuild, e.g.
-	 * KAMAILIO_DEBUG_TCP_REACTOR_THREAD=1 forces a single pool thread. */
-	if((env = getenv("KAMAILIO_DEBUG_TCP_REACTOR_THREAD")) != NULL) {
-		int n = atoi(env);
-		if(n >= 1) {
-			LM_WARN("tcp reactor pool threads overridden by "
-					"KAMAILIO_DEBUG_TCP_REACTOR_THREAD: %d -> %d\n",
-					tcp_reactor_threads, n);
-			tcp_reactor_threads = n;
-		} else {
-			LM_WARN("ignoring bad KAMAILIO_DEBUG_TCP_REACTOR_THREAD='%s' "
-					"(keeping %d)\n",
-					env, tcp_reactor_threads);
-		}
-	}
+	LM_WARN("TCP reactor: using %d threads\n", ksr_tcp_reactor_threads);
 
 #ifdef HAVE_PTHREAD_SETNAME_NP
 	/* pool_init() runs on PROC_TCP_MAIN's io_wait/main thread; name it here (pool
@@ -6195,7 +6178,7 @@ static int tcp_reactor_pool_init(void)
 		LM_ERR("failed to init reactor done_lock\n");
 		return -1;
 	}
-	tcp_rpool.threads = pkg_malloc(sizeof(pthread_t) * tcp_reactor_threads);
+	tcp_rpool.threads = pkg_malloc(sizeof(pthread_t) * ksr_tcp_reactor_threads);
 	if(tcp_rpool.threads == NULL) {
 		PKG_MEM_ERROR;
 		return -1;
@@ -6205,12 +6188,12 @@ static int tcp_reactor_pool_init(void)
 	/* serialize this process's pkg heap before any pool thread runs: from here
 	 * on the io_wait thread and the pool threads share pkg concurrently */
 	tcp_reactor_pkg_lock_install();
-	for(i = 0; i < tcp_reactor_threads; i++) {
+	for(i = 0; i < ksr_tcp_reactor_threads; i++) {
 		if(pthread_create(&tcp_rpool.threads[i], NULL,
 				   tcp_reactor_thread_routine, (void *)(long)i)
 				!= 0) {
 			LM_ERR("failed to create reactor pool thread %d/%d\n", i,
-					tcp_reactor_threads);
+					ksr_tcp_reactor_threads);
 			return -1; /* threads_no counts started threads for destroy/join */
 		}
 		tcp_rpool.threads_no++;
