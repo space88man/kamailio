@@ -179,3 +179,19 @@ else()
       "Robust process-shared mutex: NOT supported (tcp_cond uses non-robust fallback)"
   )
 endif()
+
+# Per-thread names: pthread_setname_np() lets the tcp reactor label its io_wait
+# and pool threads so profilers / top -H / gdb show distinct threads instead of
+# one opaque "kamailio" comm. glibc/musl provide the 2-arg (pthread_t, name)
+# form under _GNU_SOURCE; macOS/BSD differ or lack it, so probe rather than guess.
+set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
+set(CMAKE_REQUIRED_LIBRARIES pthread)
+check_symbol_exists(pthread_setname_np "pthread.h" HAVE_PTHREAD_SETNAME_NP)
+unset(CMAKE_REQUIRED_DEFINITIONS)
+unset(CMAKE_REQUIRED_LIBRARIES)
+if(HAVE_PTHREAD_SETNAME_NP)
+  target_compile_definitions(common INTERFACE HAVE_PTHREAD_SETNAME_NP)
+  message(STATUS "pthread_setname_np: supported (tcp reactor threads named)")
+else()
+  message(STATUS "pthread_setname_np: NOT supported (tcp reactor threads unnamed)")
+endif()
