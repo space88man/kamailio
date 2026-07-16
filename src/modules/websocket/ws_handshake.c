@@ -154,21 +154,32 @@ static int ws_str_eq(const str *v1, const str *v2)
 static int ws_compute_accept(str *key, char *obuf, int olen)
 {
 	unsigned char sha1[SHA1_DIGEST_LENGTH];
+	/* SHA-1 input is key + GUID. A conformant Sec-WebSocket-Key is 24 base64
+	 * chars, so key+GUID is ~60 bytes and fits this stack scratch - which keeps
+	 * the client handshake-response path (run on a reactor pool thread in mode
+	 * 2) off the non-thread-safe pkg heap. An over-long key is only reachable on
+	 * the worker-side server path and falls back to pkg_malloc. */
+	char stackbuf[64];
 	char *tmpbuf;
+	int tmpbuf_on_heap = 0;
 	int tmplen;
 	int ret;
 
 	tmplen = key->len + str_ws_guid.len;
-	tmpbuf = (char *)pkg_malloc(tmplen);
-	if(tmpbuf == NULL) {
+	if(tmplen <= (int)sizeof(stackbuf)) {
+		tmpbuf = stackbuf;
+	} else if((tmpbuf = (char *)pkg_malloc(tmplen)) == NULL) {
 		PKG_MEM_ERROR;
 		return -1;
+	} else {
+		tmpbuf_on_heap = 1;
 	}
 
 	memcpy(tmpbuf, key->s, key->len);
 	memcpy(tmpbuf + key->len, str_ws_guid.s, str_ws_guid.len);
 	compute_sha1_raw(sha1, (u_int8_t *)tmpbuf, tmplen);
-	pkg_free(tmpbuf);
+	if(tmpbuf_on_heap)
+		pkg_free(tmpbuf);
 
 	ret = base64_enc(sha1, SHA1_DIGEST_LENGTH, (unsigned char *)obuf, olen);
 	return ret;

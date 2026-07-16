@@ -112,6 +112,14 @@ typedef enum
  * bytes and must not be fragmented. */
 #define WS_CTRL_PAYLOAD_MAX (125)
 
+/* A control frame is at most 125 payload + 2-byte base header + optional 4-byte
+ * client mask = 131 bytes on the wire; WS_CTRL_FRAME_MAX rounds that up so
+ * pong/close/crlf replies can be built on a fixed stack buffer instead of
+ * pkg_malloc(). That matters in the tcp reactor (ksr_tcp_main_threads == 2):
+ * those replies run on a PROC_TCP_MAIN pool thread where the per-process pkg
+ * allocator is not thread-safe. */
+#define WS_CTRL_FRAME_MAX (160)
+
 int ws_keepalive_mechanism = DEFAULT_KEEPALIVE_MECHANISM;
 str ws_ping_application_data = STR_NULL;
 
@@ -148,7 +156,9 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 	int pos = 0, extended_length;
 	unsigned int frame_length;
 	unsigned int header_length;
+	char stack_buf[WS_CTRL_FRAME_MAX];
 	char *send_buf;
+	int send_buf_on_heap = 0;
 	struct tcp_connection *con;
 	struct dest_info dst;
 	union sockaddr_union *from = NULL;
@@ -212,12 +222,21 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 		return -1;
 	}
 
-	/* Allocate send buffer and build frame */
+	/* Allocate send buffer and build frame.
+	 * Control frames (pong/close/crlf) are <= WS_CTRL_FRAME_MAX once the decoder
+	 * has enforced the 125-byte cap, and are built on a reactor pool thread in
+	 * mode 2 - so use a stack scratch buffer and keep them off the non-thread-
+	 * safe pkg heap. Larger data frames (outbound SIP, built in a worker) fall
+	 * back to pkg_malloc(). */
 	header_length = 2 + extended_length + ((use_mask) ? 4 : 0);
 	frame_length = frame->payload_len + header_length;
-	if((send_buf = pkg_malloc(sizeof(char) * frame_length)) == NULL) {
+	if(frame_length <= sizeof(stack_buf)) {
+		send_buf = stack_buf;
+	} else if((send_buf = pkg_malloc(sizeof(char) * frame_length)) == NULL) {
 		PKG_MEM_ERROR_FMT("for send buffer\n");
 		return -1;
+	} else {
+		send_buf_on_heap = 1;
 	}
 	memset(send_buf, 0, sizeof(char) * frame_length);
 	send_buf[pos++] = 0x80 | (frame->opcode & 0xff);
@@ -249,7 +268,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 
 	if((con = tcpconn_get(frame->wsc->id, 0, 0, 0, 0)) == NULL) {
 		LM_WARN("TCP/TLS connection get failed\n");
-		pkg_free(send_buf);
+		if(send_buf_on_heap)
+			pkg_free(send_buf);
 		if(wsconn_rm(frame->wsc, WSCONN_EVENTROUTE_YES) < 0)
 			LM_ERR("removing WebSocket connection\n");
 		return -1;
@@ -260,7 +280,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 		if(wsconn_rm(frame->wsc, WSCONN_EVENTROUTE_YES) < 0) {
 			LM_ERR("removing WebSocket connection\n");
 			tcpconn_put(con);
-			pkg_free(send_buf);
+			if(send_buf_on_heap)
+				pkg_free(send_buf);
 			return -1;
 		}
 	}
@@ -268,7 +289,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 	if(dst.proto == PROTO_WS) {
 		if(unlikely(tcp_disable)) {
 			LM_WARN("TCP disabled\n");
-			pkg_free(send_buf);
+			if(send_buf_on_heap)
+				pkg_free(send_buf);
 			tcpconn_put(con);
 			return -1;
 		}
@@ -277,7 +299,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 	else if(dst.proto == PROTO_WSS) {
 		if(unlikely(tls_disable)) {
 			LM_WARN("TLS disabled\n");
-			pkg_free(send_buf);
+			if(send_buf_on_heap)
+				pkg_free(send_buf);
 			tcpconn_put(con);
 			return -1;
 		}
@@ -297,7 +320,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 
 	if(tcp_send(&dst, from, send_buf, frame_length) < 0) {
 		LM_ERR("sending WebSocket frame\n");
-		pkg_free(send_buf);
+		if(send_buf_on_heap)
+			pkg_free(send_buf);
 		update_stat(ws_failed_connections, 1);
 		if(sub_proto == SUB_PROTOCOL_SIP)
 			update_stat(ws_sip_failed_connections, 1);
@@ -319,7 +343,8 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 				update_stat(ws_msrp_transmitted_frames, 1);
 	}
 
-	pkg_free(send_buf);
+	if(send_buf_on_heap)
+		pkg_free(send_buf);
 	tcpconn_put(con);
 	return 0;
 }
@@ -327,7 +352,12 @@ static int encode_and_send_ws_frame(ws_frame_t *frame, conn_close_t conn_close)
 static int close_connection(ws_connection_t **p_wsc, ws_close_type_t type,
 		short int status, str reason)
 {
-	char *data;
+	/* A CLOSE is a control frame, so its whole payload (2-byte status + reason)
+	 * must fit in 125 bytes (RFC 6455 5.5). A fixed stack buffer is therefore
+	 * always sufficient and, unlike pkg_malloc, is safe on a reactor pool thread
+	 * in mode 2. */
+	char data[WS_CTRL_PAYLOAD_MAX];
+	unsigned int reason_len;
 	ws_frame_t frame;
 	ws_connection_t *wsc = NULL;
 	int sub_proto = -1;
@@ -338,20 +368,19 @@ static int close_connection(ws_connection_t **p_wsc, ws_close_type_t type,
 	wsc = *p_wsc;
 
 	if(wsc->state == WS_S_OPEN) {
-		data = pkg_malloc(sizeof(char) * (reason.len + 2));
-		if(data == NULL) {
-			PKG_MEM_ERROR;
-			return -1;
-		}
+		/* clamp the reason so status(2) + reason fits the control-frame limit */
+		reason_len = ((size_t)reason.len > sizeof(data) - 2)
+							 ? (unsigned int)(sizeof(data) - 2)
+							 : (unsigned int)reason.len;
 
 		data[0] = (status & 0xff00) >> 8;
 		data[1] = (status & 0x00ff) >> 0;
-		memcpy(&data[2], reason.s, reason.len);
+		memcpy(&data[2], reason.s, reason_len);
 
 		memset(&frame, 0, sizeof(frame));
 		frame.fin = 1;
 		frame.opcode = OPCODE_CLOSE;
-		frame.payload_len = reason.len + 2;
+		frame.payload_len = reason_len + 2;
 		frame.payload_data = data;
 		frame.wsc = wsc;
 		sub_proto = wsc->sub_protocol;
@@ -360,11 +389,8 @@ static int close_connection(ws_connection_t **p_wsc, ws_close_type_t type,
 				   type == REMOTE_CLOSE ? CONN_CLOSE_DO : CONN_CLOSE_DONT)
 				< 0) {
 			LM_ERR("sending WebSocket close\n");
-			pkg_free(data);
 			return -1;
 		}
-
-		pkg_free(data);
 
 		if(type == LOCAL_CLOSE) {
 			frame.wsc->state = WS_S_CLOSING;
