@@ -39,8 +39,11 @@
  * per-process assumption: PROC_TCP_MAIN runs the io_wait (epoll) thread plus a
  * pool of reader threads, and they all share this one process's pkg heap:
  *   - io_wait thread: reactor job alloc/free, io housekeeping
- *   - pool threads:   WS frame encode (keepalive/pong/close), TLS/WSS, and any
- *                     config/event route run on the pool (faked_msg_init, ...)
+ *   - pool threads:   codec scratch. WS control-frame encode (pong/close) was
+ *                     the original corruptor here; it now builds on stack
+ *                     buffers, and TLS uses thread-local/shm scratch. The
+ *                     intent is that pool threads never touch pkg (enforced
+ *                     under EXTRA_DEBUG by the tripwire below).
  * Concurrent unlocked pkg_malloc/pkg_free across those threads corrupts the
  * heap freelist (seen as qm_debug_check_frag "end overwritten" aborts).
  *
@@ -55,6 +58,12 @@
  * This only serializes pkg. It is orthogonal to the other reactor thread-safety
  * measures (shared read buffers, io_h ownership, per-connection shields), which
  * are handled where that state lives.
+ *
+ * The long-term goal is to keep the pool threads pkg-free (use stack /
+ * thread-local / shm memory in codec paths) so the io_wait thread is the sole
+ * pkg user and this serialization can be dropped. Under EXTRA_DEBUG the wrappers
+ * carry a tripwire (_ksr_pkg_pool_thread_guard(), via tcp_reactor_pool_thread_idx())
+ * that aborts on any pkg call from a pool thread, so regressions surface early.
  */
 
 #ifndef _tcp_reactor_mem_h

@@ -25,8 +25,11 @@
  * @brief Mutex-wrapped pkg allocator for PROC_TCP_MAIN (see tcp_reactor_mem.h).
  */
 
+#include <stdlib.h> /* abort() in the EXTRA_DEBUG pool-thread guard */
+
 #include "dprint.h"
 #include "mem/pkg.h"
+#include "tcp_reactor.h" /* tcp_reactor_pool_thread_idx() - pool-thread guard */
 #include "tcp_reactor_mem.h"
 
 #ifdef PKG_MALLOC
@@ -48,6 +51,26 @@ static sr_realloc_f _ksr_pkg_orig_xrealloc;
 static sr_realloc_f _ksr_pkg_orig_xreallocxf;
 static sr_free_f _ksr_pkg_orig_xfree;
 
+/* Debug tripwire: no pkg allocation may happen on a reactor pool thread - those
+ * paths must use stack, thread-local or shm memory. The io_wait/main thread
+ * (idx < 0) is the only legitimate pkg user in PROC_TCP_MAIN, so keeping the
+ * pool threads pkg-free is the invariant that would let the serialization below
+ * eventually be dropped. Compiled out unless EXTRA_DEBUG - no cost on the
+ * production hot path; when enabled it aborts so a stray pool-thread pkg call is
+ * impossible to miss. */
+static inline void _ksr_pkg_pool_thread_guard(void)
+{
+#ifdef EXTRA_DEBUG
+	int idx = tcp_reactor_pool_thread_idx();
+	if(idx >= 0) {
+		LM_CRIT("pkg alloc/free on reactor pool thread %d - not pkg-safe; this "
+				"path must use stack/thread-local/shm memory\n",
+				idx);
+		abort();
+	}
+#endif
+}
+
 /* The wrappers just take the mutex and delegate to the saved original. Two
  * sets: the DBG_SR_MEMORY build carries (file, func, line, mname) through the
  * allocator vtable, the normal build does not - match both signatures exactly. */
@@ -56,6 +79,7 @@ static void *_ksr_pkg_l_xmalloc(void *mbp, size_t size, const char *file,
 		const char *func, unsigned int line, const char *mname)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xmalloc(mbp, size, file, func, line, mname);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -65,6 +89,7 @@ static void *_ksr_pkg_l_xmallocxz(void *mbp, size_t size, const char *file,
 		const char *func, unsigned int line, const char *mname)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xmallocxz(mbp, size, file, func, line, mname);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -75,6 +100,7 @@ static void *_ksr_pkg_l_xrealloc(void *mbp, void *ptr, size_t size,
 		const char *mname)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xrealloc(mbp, ptr, size, file, func, line, mname);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -85,6 +111,7 @@ static void *_ksr_pkg_l_xreallocxf(void *mbp, void *ptr, size_t size,
 		const char *mname)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xreallocxf(mbp, ptr, size, file, func, line, mname);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -93,6 +120,7 @@ static void *_ksr_pkg_l_xreallocxf(void *mbp, void *ptr, size_t size,
 static void _ksr_pkg_l_xfree(void *mbp, void *ptr, const char *file,
 		const char *func, unsigned int line, const char *mname)
 {
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	_ksr_pkg_orig_xfree(mbp, ptr, file, func, line, mname);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -101,6 +129,7 @@ static void _ksr_pkg_l_xfree(void *mbp, void *ptr, const char *file,
 static void *_ksr_pkg_l_xmalloc(void *mbp, size_t size)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xmalloc(mbp, size);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -109,6 +138,7 @@ static void *_ksr_pkg_l_xmalloc(void *mbp, size_t size)
 static void *_ksr_pkg_l_xmallocxz(void *mbp, size_t size)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xmallocxz(mbp, size);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -117,6 +147,7 @@ static void *_ksr_pkg_l_xmallocxz(void *mbp, size_t size)
 static void *_ksr_pkg_l_xrealloc(void *mbp, void *ptr, size_t size)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xrealloc(mbp, ptr, size);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -125,6 +156,7 @@ static void *_ksr_pkg_l_xrealloc(void *mbp, void *ptr, size_t size)
 static void *_ksr_pkg_l_xreallocxf(void *mbp, void *ptr, size_t size)
 {
 	void *p;
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	p = _ksr_pkg_orig_xreallocxf(mbp, ptr, size);
 	pthread_mutex_unlock(&_ksr_pkg_lock);
@@ -132,6 +164,7 @@ static void *_ksr_pkg_l_xreallocxf(void *mbp, void *ptr, size_t size)
 }
 static void _ksr_pkg_l_xfree(void *mbp, void *ptr)
 {
+	_ksr_pkg_pool_thread_guard();
 	pthread_mutex_lock(&_ksr_pkg_lock);
 	_ksr_pkg_orig_xfree(mbp, ptr);
 	pthread_mutex_unlock(&_ksr_pkg_lock);

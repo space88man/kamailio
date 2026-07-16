@@ -2335,6 +2335,17 @@ static int tcp_reactor_wsq_add(struct tcp_connection *c, const char *buf,
 static _Thread_local int tcp_reactor_thread_idx = -1;
 #endif /* TCP_ASYNC */
 
+/* Reactor pool thread index of the caller (see tcp_reactor.h). Kept next to the
+ * thread-local it exposes; returns -1 when TCP_ASYNC is compiled out (no pool). */
+int tcp_reactor_pool_thread_idx(void)
+{
+#ifdef TCP_ASYNC
+	return tcp_reactor_thread_idx;
+#else
+	return -1;
+#endif
+}
+
 #define tcp_dst_ephemeral_set(n, c, dst)           \
 	do {                                           \
 		if(n >= 0) {                               \
