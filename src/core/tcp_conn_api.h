@@ -30,7 +30,9 @@
 /* TCP connection API for modules: change a connection by its id from any
  * process; the core applies the change where the connection's owner is
  *  - tcp_main_threads 0/1: in the calling process, as modules did before
- *  - tcp_main_threads 2: in PROC_TCP_MAIN (a command or an io_wait task)
+ *  - tcp_main_threads 2: in PROC_TCP_MAIN (a command or an io_wait task); on
+ *    a tcp main pool thread the setters below return -1 (io_wait owns the
+ *    flags, the timer and the socket), tcpconn_mark_bad() acts as the job
  * Reads (state, id, rcv, type) stay direct. */
 
 /* return codes: 1 success, -1 failure, TCPCONN_API_NOCONN unknown conid */
@@ -39,6 +41,9 @@
 /* close conid after its pending writes; reason (enum tcp_closed_reason,
  * 0 = none) is reported by the tcp:closed/timeout/reset events */
 int tcpconn_close(int conid, enum tcp_closed_reason reason);
+
+/* mark conid bad: close it now (after a send in flight), no further sends */
+int tcpconn_mark_bad(int conid);
 
 /* set the idle lifetime of conid (seconds) */
 int tcpconn_set_lifetime(int conid, unsigned int secs);

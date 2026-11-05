@@ -39,6 +39,7 @@
 
 #include "tcp_conn_api.h" /* tcp_conn.h: before tcp_reactor.h */
 #include "dprint.h"
+#include "locking.h"
 #include "globals.h"
 #include "pt.h"
 #include "pass_fd.h"
@@ -55,9 +56,14 @@ enum tcpconn_api_op
 {
 	TCPCONN_OP_KA_ON = 1, /* p1 idle, p2 cnt, p3 intvl */
 	TCPCONN_OP_KA_OFF,
-	TCPCONN_OP_FLAGS,	/* p1 flags */
-	TCPCONN_OP_LIFETIME /* p1 seconds */
+	TCPCONN_OP_FLAGS,	 /* p1 flags */
+	TCPCONN_OP_LIFETIME, /* p1 seconds */
+	TCPCONN_OP_MARK_BAD
 };
+
+/* mode 2: the caller is a tcp main pool thread (a read or write job) */
+#define TCPCONN_API_ON_POOL() \
+	(ksr_tcp_main_threads == 2 && tcp_reactor_pool_thread_idx() >= 0)
 
 /* keepalive options on fd: 1 success, -1 failure */
 static int tcpconn_api_keepalive(int fd, int on, int idle, int cnt, int intvl)
@@ -162,6 +168,13 @@ static void tcpconn_api_task_exec(void *p, int pidx)
 			tcp_reactor_set_lifetime(c, S_TO_TICKS(t->p1));
 			rc = 1;
 			break;
+		case TCPCONN_OP_MARK_BAD:
+			lock_get(&c->write_lock);
+			c->send_flags.f |= SND_F_CON_CLOSE;
+			lock_release(&c->write_lock);
+			tcp_reactor_mark_bad(c);
+			rc = 1;
+			break;
 		default:
 			LM_BUG("unknown request %d\n", t->op);
 	}
@@ -217,6 +230,18 @@ static int tcpconn_api_run(
 	return rc;
 }
 
+/* mode 2: io_wait owns what the setters change; refuse them on a pool thread */
+static int tcpconn_api_pool_refuse(const char *op)
+{
+	if(unlikely(TCPCONN_API_ON_POOL())) {
+		LM_ERR("%s: run it from a SIP worker or the io_wait thread, a tcp main"
+			   " pool thread holds jobs only\n",
+				op);
+		return 1;
+	}
+	return 0;
+}
+
 int tcpconn_close(int conid, enum tcp_closed_reason reason)
 {
 	struct tcp_connection *c;
@@ -249,6 +274,8 @@ int tcpconn_set_lifetime(int conid, unsigned int secs)
 	struct tcp_connection *c;
 	int rc;
 
+	if(tcpconn_api_pool_refuse("tcpconn_set_lifetime"))
+		return -1;
 	if((c = tcpconn_get(conid, 0, 0, 0, 0)) == NULL)
 		return TCPCONN_API_NOCONN;
 	if(ksr_tcp_main_threads == 2) {
@@ -269,6 +296,8 @@ int tcpconn_set_keepalive(int conid, int on, int idle, int cnt, int intvl)
 	int fd;
 	int rc;
 
+	if(tcpconn_api_pool_refuse("tcpconn_set_keepalive"))
+		return -1;
 	if((c = tcpconn_get(conid, 0, 0, 0, 0)) == NULL)
 		return TCPCONN_API_NOCONN;
 	if(ksr_tcp_main_threads == 2) {
@@ -297,6 +326,8 @@ int tcpconn_set_flags(int conid, unsigned int flags)
 				TCPCONN_API_FLAGS);
 		return -1;
 	}
+	if(tcpconn_api_pool_refuse("tcpconn_set_flags"))
+		return -1;
 	if((c = tcpconn_get(conid, 0, 0, 0, 0)) == NULL)
 		return TCPCONN_API_NOCONN;
 	if(ksr_tcp_main_threads == 2) {
@@ -304,6 +335,28 @@ int tcpconn_set_flags(int conid, unsigned int flags)
 	} else {
 		c->flags |= flags;
 		rc = 1;
+	}
+	tcpconn_chld_put(c);
+	return rc;
+}
+
+int tcpconn_mark_bad(int conid)
+{
+	struct tcp_connection *c;
+	int rc = 1;
+
+	if((c = tcpconn_get(conid, 0, 0, 0, 0)) == NULL)
+		return TCPCONN_API_NOCONN;
+	if(ksr_tcp_main_threads == 2 && !TCPCONN_API_ON_POOL()) {
+		rc = tcpconn_api_run(c, TCPCONN_OP_MARK_BAD, 0, 0, 0);
+	} else {
+		/* modes 0/1, and a mode 2 job on its own c: the job writes c->state,
+		 * its completion on io_wait closes c */
+		lock_get(&c->write_lock);
+		c->send_flags.f |= SND_F_CON_CLOSE;
+		lock_release(&c->write_lock);
+		c->state = S_CONN_BAD;
+		c->timeout = get_ticks_raw();
 	}
 	tcpconn_chld_put(c);
 	return rc;
