@@ -42,7 +42,7 @@
  * 0 = none) is reported by the tcp:closed/timeout/reset events */
 int tcpconn_close(int conid, enum tcp_closed_reason reason);
 
-/* mark conid bad: close it now (after a send in flight), no further sends */
+/* mark conid bad and close it now; data still queued for it is dropped */
 int tcpconn_mark_bad(int conid);
 
 /* set the idle lifetime of conid (seconds) */
